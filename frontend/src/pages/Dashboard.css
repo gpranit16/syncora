@@ -1,0 +1,125 @@
+.dashboard {
+  display: flex;
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  position: relative;
+}
+
+.dashboard-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dashboard-content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Welcome Panel */
+.welcome-panel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-abyss);
+}
+
+.welcome-inner {
+  text-align: center;
+  max-width: 440px;
+  padding: var(--space-6);
+}
+
+.welcome-icon {
+  color: var(--accent-primary);
+  opacity: 0.4;
+  margin-bottom: var(--space-6);
+}
+
+.welcome-inner h2 {
+  font-size: 1.5rem;
+  margin-bottom: var(--space-3);
+}
+
+.welcome-inner p {
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  margin-bottom: var(--space-6);
+}
+
+.welcome-stats {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: center;
+}
+
+.welcome-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.welcome-stat-label {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.welcome-stat-value {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--accent-primary);
+  text-transform: capitalize;
+}
+
+/* Onboarding Page */
+.onboarding-page {
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-abyss);
+  position: relative;
+  overflow: hidden;
+}
+
+.onboarding-container {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  max-width: 440px;
+  width: 100%;
+  padding: var(--space-6);
+}
+
+.onboarding-container h1 {
+  font-size: 1.75rem;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.onboarding-desc {
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  margin-bottom: var(--space-8);
+}
+
+.onboarding-form {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  text-align: left;
+}

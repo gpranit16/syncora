@@ -1,0 +1,136 @@
+.task-board {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-abyss);
+  overflow: hidden;
+}
+
+.task-board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.task-board-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.task-board-title h3 {
+  font-size: 1rem;
+}
+
+.task-board-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.task-filters {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.task-filters .btn {
+  text-transform: capitalize;
+}
+
+/* Columns */
+.task-columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  overflow-y: auto;
+}
+
+.task-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.task-column-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.task-count {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.task-column-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Task Card */
+.task-card {
+  cursor: default;
+}
+
+.task-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.task-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.task-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: var(--space-2);
+}
+
+.task-card-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.task-meta {
+  font-size: 0.6875rem;
+  color: var(--text-disabled);
+}
+
+.task-card-footer .btn {
+  margin-left: auto;
+}
+
+.task-priority-selector {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.task-priority-selector .btn {
+  text-transform: capitalize;
+}

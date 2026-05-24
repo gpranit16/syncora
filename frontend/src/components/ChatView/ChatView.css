@@ -1,0 +1,223 @@
+.chat-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-abyss);
+  overflow: hidden;
+}
+
+/* Header */
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.chat-header-icon {
+  color: var(--text-muted);
+}
+
+.chat-header-info h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.chat-header-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Messages */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Message */
+.message {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+  position: relative;
+}
+
+.message:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.message:hover .message-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.message-own .message-content {
+  background: rgba(124, 92, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.message-deleted .message-text {
+  color: var(--text-disabled);
+  font-style: italic;
+}
+
+.message-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 2px;
+}
+
+.message-sender {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+}
+
+.message-time {
+  font-size: 0.6875rem;
+  color: var(--text-disabled);
+}
+
+.message-edited-tag {
+  font-size: 0.625rem;
+  color: var(--text-disabled);
+  font-style: italic;
+}
+
+.message-text {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.message-reply-ref {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.6875rem;
+  color: var(--accent-secondary);
+  margin-bottom: 4px;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--accent-secondary);
+}
+
+/* Message Actions */
+.message-actions {
+  position: absolute;
+  top: 4px;
+  right: var(--space-2);
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.message-actions .btn-icon {
+  width: 28px;
+  height: 28px;
+}
+
+/* Edit Form */
+.message-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.message-edit-form .input {
+  height: 32px;
+}
+
+.message-edit-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* Reply Banner */
+.reply-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.reply-banner strong {
+  color: var(--accent-primary);
+}
+
+.reply-banner .btn-icon {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+}
+
+/* Composer */
+.chat-composer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.composer-input {
+  flex: 1;
+  height: 44px;
+  padding: 0 var(--space-4);
+  background: var(--bg-abyss);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  transition: border-color var(--transition-fast);
+}
+
+.composer-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.15);
+}
+
+.composer-input::placeholder {
+  color: var(--text-disabled);
+}
+
+.send-btn {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

@@ -1,0 +1,82 @@
+.dm-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-abyss);
+}
+
+.dm-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.dm-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.dm-header-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.dm-header-email {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.dm-search {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dm-search .input {
+  flex: 1;
+}
+
+.dm-user-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+
+.dm-user-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  border: none;
+  background: none;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.dm-user-item:hover {
+  background: var(--bg-elevated);
+}
+
+.dm-user-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.dm-user-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.dm-user-email {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
