@@ -8,6 +8,7 @@ interface AuthContextType {
   login: (user: AuthUser, token: string) => void;
   logout: () => void;
   isAuthenticated: boolean;
+  isReady: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -18,6 +19,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return stored ? JSON.parse(stored) : null;
   });
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    setIsReady(true);
+  }, []);
 
   useEffect(() => {
     if (user && token) {
@@ -44,7 +50,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token, isReady }}>
       {children}
     </AuthContext.Provider>
   );

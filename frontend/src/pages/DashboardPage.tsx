@@ -16,7 +16,6 @@ const DashboardPage: React.FC = () => {
   const [activeView, setActiveView] = useState<'channel' | 'dm' | 'tasks'>('channel');
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [preferredChannelId, setPreferredChannelId] = useState<number | null>(null);
-  const [preferredView, setPreferredView] = useState<'channel' | 'dm' | 'tasks'>('channel');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Workspace creation
@@ -43,7 +42,6 @@ const DashboardPage: React.FC = () => {
     const storedDmTarget = localStorage.getItem('dmTarget');
     if (storedView === 'channel' || storedView === 'dm' || storedView === 'tasks') {
       setActiveView(storedView);
-      setPreferredView(storedView);
     }
     if (storedChannelId) {
       setPreferredChannelId(Number(storedChannelId));
@@ -276,7 +274,6 @@ const DashboardPage: React.FC = () => {
         onTasksSelect={handleTasksSelect}
         activeView={activeView}
         initialChannelId={preferredChannelId}
-        initialView={preferredView}
         isOpen={isMobileSidebarOpen}
         onClose={() => setIsMobileSidebarOpen(false)}
       />

@@ -7,14 +7,26 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 
+const LoadingScreen: React.FC<{ message?: string }> = ({ message = 'Loading...' }) => (
+  <div className="onboarding-page">
+    <div className="auth-ambient" />
+    <div className="onboarding-container">
+      <h1>{message}</h1>
+      <p className="onboarding-desc">Hang tight, we’re getting things ready.</p>
+    </div>
+  </div>
+);
+
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isReady } = useAuth();
+  if (!isReady) return <LoadingScreen message="Preparing your workspace..." />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 };
 
 const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isReady } = useAuth();
+  if (!isReady) return <LoadingScreen message="Preparing your session..." />;
   if (isAuthenticated) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
