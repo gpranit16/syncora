@@ -21,6 +21,17 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
   const [selectedUser, setSelectedUser] = useState<SearchUser | null>(null);
 
   useEffect(() => {
+    if (selectedUser) {
+      const target = { user_id: selectedUser.user_id, name: selectedUser.name };
+      localStorage.setItem('dmTarget', JSON.stringify(target));
+      onTargetChange?.(target);
+    } else {
+      localStorage.removeItem('dmTarget');
+      onTargetChange?.(null);
+    }
+  }, [selectedUser, onTargetChange]);
+
+  useEffect(() => {
     if (initialTargetUser) {
       setSelectedUser({ user_id: initialTargetUser.user_id, name: initialTargetUser.name, email: '' });
       onTargetChange?.(initialTargetUser);
