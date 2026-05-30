@@ -23,9 +23,16 @@ const chatSocket = require("./sockets/chatSocket");
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((origin) => origin.trim())
+  : "*";
+const corsOptions = {
+  origin: corsOrigins,
+  ...(corsOrigins === "*" ? {} : { credentials: true }),
+};
 
 // Express middlewares
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static("uploads"));
@@ -52,9 +59,7 @@ app.get("/api/protected", authMiddleware, (req, res) => {
 
 // Socket.io setup
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-  },
+  cors: corsOptions,
 });
 
 chatSocket(io);
