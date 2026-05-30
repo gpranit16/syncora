@@ -14,11 +14,12 @@ interface SidebarProps {
   onTasksSelect: () => void;
   activeView: 'channel' | 'dm' | 'tasks';
   initialChannelId?: number | null;
+  initialView?: 'channel' | 'dm' | 'tasks';
   isOpen: boolean;
   onClose: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onDmSelect, onTasksSelect, activeView, initialChannelId, isOpen, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onDmSelect, onTasksSelect, activeView, initialChannelId, initialView, isOpen, onClose }) => {
   const { user, logout } = useAuth();
   const { workspaces, activeWorkspace, setActiveWorkspace } = useWorkspace();
   const { unread } = useUnread();
@@ -37,12 +38,13 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
   }, [activeWorkspace]);
 
   useEffect(() => {
+    if (initialView && initialView !== 'channel') return;
     if (!initialChannelId || activeChannelId || channels.length === 0) return;
     const storedChannel = channels.find((ch) => ch.channel_id === initialChannelId);
     if (storedChannel) {
       onChannelSelect(storedChannel);
     }
-  }, [initialChannelId, activeChannelId, channels, onChannelSelect]);
+  }, [initialChannelId, activeChannelId, channels, initialView, onChannelSelect]);
 
   const handleCreateChannel = async () => {
     if (!newChannelName.trim() || !activeWorkspace) return;
