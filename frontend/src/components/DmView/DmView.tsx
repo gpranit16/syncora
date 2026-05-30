@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MessageSquare, Send, ArrowLeft, Edit3, Trash2, Reply, X, Paperclip } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getDirectMessages, sendDirectMessage, getRecentDmUsers, editDirectMessage, deleteDirectMessage, type DirectMessage } from '../../api/directMessages';
+import { uploadFile } from '../../api/files';
+import { API_BASE } from '../../api/client';
 import { globalSearch, type SearchUser } from '../../api/search';
 import { getSocket } from '../../socket/socketManager';
 import { joinDm, emitSendDm, emitMarkDmRead, emitTyping, emitStopTyping, emitDmEdited, emitDmDeleted } from '../../socket/socketManager';
@@ -254,19 +256,11 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser }) => {
 
     if (selectedFile) {
       setIsUploading(true);
-      const formData = new FormData();
-      formData.append('file', selectedFile);
       try {
-        const res = await fetch('/api/files/upload', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          },
-          body: formData
-        });
-        const data = await res.json();
+        const { data } = await uploadFile(selectedFile);
         if (data.success && data.file) {
-          fileUrl = `/uploads/${data.file.filename}`;
+          const uploadBase = API_BASE || '';
+          fileUrl = `${uploadBase}/uploads/${data.file.filename}`;
           fileName = data.file.filename;
         }
       } catch (err) {

@@ -4,6 +4,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { getWorkspaceMembers } from '../../api/workspaces';
 import { getMessages, sendMessage as sendMsgApi, editMessage as editMsgApi, deleteMessage as deleteMsgApi, type Message } from '../../api/messages';
+import { uploadFile } from '../../api/files';
+import { API_BASE } from '../../api/client';
 import { getSocket } from '../../socket/socketManager';
 import { joinChannel, emitSendMessage, emitMessageEdited, emitMessageDeleted, emitTyping, emitStopTyping, emitMarkChannelRead } from '../../socket/socketManager';
 import { useTypingIndicator, useAutoScroll } from '../../hooks/useSocket';
@@ -124,19 +126,11 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
 
     if (selectedFile) {
       setIsUploading(true);
-      const formData = new FormData();
-      formData.append('file', selectedFile);
       try {
-        const res = await fetch('/api/files/upload', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          },
-          body: formData
-        });
-        const uploadData = await res.json();
+        const { data: uploadData } = await uploadFile(selectedFile);
         if (uploadData.success && uploadData.file) {
-          fileUrl = `/uploads/${uploadData.file.filename}`;
+          const uploadBase = API_BASE || '';
+          fileUrl = `${uploadBase}/uploads/${uploadData.file.filename}`;
           fileName = uploadData.file.filename;
         }
       } catch (err) {
