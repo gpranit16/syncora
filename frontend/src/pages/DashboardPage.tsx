@@ -15,6 +15,7 @@ const DashboardPage: React.FC = () => {
   const { activeWorkspace, workspaces, refreshWorkspaces } = useWorkspace();
   const [activeView, setActiveView] = useState<'channel' | 'dm' | 'tasks'>('channel');
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
+  const [preferredChannelId, setPreferredChannelId] = useState<number | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Workspace creation
@@ -34,6 +35,28 @@ const DashboardPage: React.FC = () => {
       }).catch(console.error);
     }
   }, [activeWorkspace, workspaces.length]);
+
+  useEffect(() => {
+    const storedView = localStorage.getItem('activeView');
+    const storedChannelId = localStorage.getItem('activeChannelId');
+    const storedDmTarget = localStorage.getItem('dmTarget');
+    if (storedView === 'channel' || storedView === 'dm' || storedView === 'tasks') {
+      setActiveView(storedView);
+    }
+    if (storedChannelId) {
+      setPreferredChannelId(Number(storedChannelId));
+    }
+    if (storedDmTarget) {
+      try {
+        const parsed = JSON.parse(storedDmTarget);
+        if (parsed?.user_id && parsed?.name) {
+          setDmTarget(parsed);
+        }
+      } catch (e) {
+        console.warn('Failed to parse dmTarget from storage');
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const socket = getSocket();
@@ -102,22 +125,30 @@ const DashboardPage: React.FC = () => {
   const handleChannelSelect = (channel: Channel) => {
     setActiveChannel(channel);
     setActiveView('channel');
+    setPreferredChannelId(channel.channel_id);
+    localStorage.setItem('activeView', 'channel');
+    localStorage.setItem('activeChannelId', String(channel.channel_id));
     setIsMobileSidebarOpen(false);
   };
 
   const handleDmSelect = (userId?: number, userName?: string) => {
     if (userId && userName) {
-      setDmTarget({ user_id: userId, name: userName });
+      const target = { user_id: userId, name: userName };
+      setDmTarget(target);
+      localStorage.setItem('dmTarget', JSON.stringify(target));
     } else {
       setDmTarget(null);
+      localStorage.removeItem('dmTarget');
     }
     setActiveView('dm');
+    localStorage.setItem('activeView', 'dm');
     setActiveChannel(null);
     setIsMobileSidebarOpen(false);
   };
 
   const handleTasksSelect = () => {
     setActiveView('tasks');
+    localStorage.setItem('activeView', 'tasks');
     setActiveChannel(null);
     setIsMobileSidebarOpen(false);
   };
@@ -230,6 +261,7 @@ const DashboardPage: React.FC = () => {
         onDmSelect={handleDmSelect}
         onTasksSelect={handleTasksSelect}
         activeView={activeView}
+        initialChannelId={preferredChannelId}
         isOpen={isMobileSidebarOpen}
         onClose={() => setIsMobileSidebarOpen(false)}
       />

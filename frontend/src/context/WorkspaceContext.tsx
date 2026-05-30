@@ -26,7 +26,11 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
       const { data } = await getWorkspaces();
       setWorkspaces(data.workspaces);
       if (!activeWorkspace && data.workspaces.length > 0) {
-        setActiveWorkspace(data.workspaces[0]);
+        const storedWorkspaceId = localStorage.getItem('activeWorkspaceId');
+        const storedWorkspace = storedWorkspaceId
+          ? data.workspaces.find((ws) => ws.workspace_id === Number(storedWorkspaceId))
+          : null;
+        setActiveWorkspace(storedWorkspace || data.workspaces[0]);
       }
     } catch (err) {
       console.error('Failed to fetch workspaces:', err);
@@ -39,8 +43,13 @@ export const WorkspaceProvider: React.FC<{ children: ReactNode }> = ({ children 
     refreshWorkspaces();
   }, [isAuthenticated]);
 
+  const setActiveWorkspaceWithPersist = (workspace: Workspace) => {
+    localStorage.setItem('activeWorkspaceId', String(workspace.workspace_id));
+    setActiveWorkspace(workspace);
+  };
+
   return (
-    <WorkspaceContext.Provider value={{ workspaces, activeWorkspace, setActiveWorkspace, refreshWorkspaces, loading }}>
+    <WorkspaceContext.Provider value={{ workspaces, activeWorkspace, setActiveWorkspace: setActiveWorkspaceWithPersist, refreshWorkspaces, loading }}>
       {children}
     </WorkspaceContext.Provider>
   );
