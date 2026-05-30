@@ -13,15 +13,17 @@ import './DmView.css';
 
 interface DmViewProps {
   initialTargetUser?: { user_id: number; name: string } | null;
+  onTargetChange?: (target: { user_id: number; name: string } | null) => void;
 }
 
-const DmView: React.FC<DmViewProps> = ({ initialTargetUser }) => {
+const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) => {
   const { user } = useAuth();
   const [selectedUser, setSelectedUser] = useState<SearchUser | null>(null);
 
   useEffect(() => {
     if (initialTargetUser) {
       setSelectedUser({ user_id: initialTargetUser.user_id, name: initialTargetUser.name, email: '' });
+      onTargetChange?.(initialTargetUser);
     }
   }, [initialTargetUser]);
   const [messages, setMessages] = useState<DirectMessage[]>([]);
@@ -325,7 +327,14 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser }) => {
         </div>
         <div className="dm-user-list">
           {searchQuery && searchResults.map((u) => (
-            <button key={u.user_id} className="dm-user-item" onClick={() => setSelectedUser(u)}>
+            <button
+              key={u.user_id}
+              className="dm-user-item"
+              onClick={() => {
+                setSelectedUser(u);
+                onTargetChange?.({ user_id: u.user_id, name: u.name });
+              }}
+            >
               <div className="avatar">{getInitials(u.name)}</div>
               <div className="dm-user-info">
                 <span className="dm-user-name">{u.name}</span>
@@ -343,7 +352,14 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser }) => {
             <>
               <h4 style={{ margin: '16px 20px 8px', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Recent Conversations</h4>
               {recentUsers.map((u) => (
-                <button key={u.user_id} className="dm-user-item" onClick={() => setSelectedUser(u)}>
+                <button
+                  key={u.user_id}
+                  className="dm-user-item"
+                  onClick={() => {
+                    setSelectedUser(u);
+                    onTargetChange?.({ user_id: u.user_id, name: u.name });
+                  }}
+                >
                   <div className="avatar">{getInitials(u.name)}</div>
                   <div className="dm-user-info">
                     <span className="dm-user-name">{u.name}</span>
@@ -369,7 +385,13 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser }) => {
   return (
     <div className="dm-view">
       <div className="dm-header">
-        <button className="btn-icon" onClick={() => setSelectedUser(null)}>
+        <button
+          className="btn-icon"
+          onClick={() => {
+            setSelectedUser(null);
+            onTargetChange?.(null);
+          }}
+        >
           <ArrowLeft size={18} />
         </button>
         <div className="avatar" style={{ position: 'relative' }}>
