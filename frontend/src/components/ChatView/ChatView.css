@@ -5,6 +5,7 @@
   height: 100%;
   background: var(--bg-abyss);
   overflow: hidden;
+  position: relative;
 }
 
 /* Header */
@@ -220,4 +221,16 @@
 .send-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .chat-members-panel {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    border-left: none !important;
+    background: var(--bg-panel) !important;
+    z-index: 5;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+  }
 }

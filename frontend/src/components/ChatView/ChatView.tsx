@@ -395,7 +395,7 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
 
       {/* Right Sidebar for Members */}
       {showMembers && (
-        <div style={{ width: 280, borderLeft: '1px solid var(--border-color)', background: 'var(--surface-base)', display: 'flex', flexDirection: 'column' }}>
+        <div className="chat-members-panel" style={{ width: 280, borderLeft: '1px solid var(--border-color)', background: 'var(--surface-base)', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h3 style={{ margin: 0, fontSize: '0.875rem' }}>Members</h3>
             <button className="btn-icon" onClick={() => setShowMembers(false)}><X size={16} /></button>
