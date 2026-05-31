@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Hash, Send, Paperclip, Edit3, Trash2, Reply, X, MoreVertical, Users } from 'lucide-react';
+import { Hash, Send, Paperclip, Edit3, Trash2, Reply, X, Users } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { getWorkspaceMembers } from '../../api/workspaces';
@@ -397,7 +397,7 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
       {showMembers && (
         <>
           <div className="members-overlay" onClick={() => setShowMembers(false)} />
-          <div className="chat-members-panel" style={{ width: 280, borderLeft: '1px solid var(--border-subtle)', background: 'var(--bg-panel)', display: 'flex', flexDirection: 'column' }}>
+          <div className="chat-members-panel">
             <div className="members-header">
               <h3>Members</h3>
               <button className="btn-icon" onClick={() => setShowMembers(false)}><X size={16} /></button>
@@ -411,19 +411,9 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
                     <div className="member-role">{member.role}</div>
                   </div>
                   {member.user_id !== user?.user_id && (
-                    <button className="btn btn-sm btn-ghost" onClick={() => onDmSelect(member.user_id, member.name)}>
+                    <button className="btn btn-sm btn-primary" onClick={() => { onDmSelect(member.user_id, member.name); setShowMembers(false); }}>
                       Message
                     </button>
-                  )}
-                  {(activeWorkspace?.role === 'owner' || activeWorkspace?.role === 'admin') && member.user_id !== user?.user_id && (
-                    <div className="member-actions">
-                      <button className="btn-icon" onClick={(e) => {
-                        e.stopPropagation();
-                        alert('Admin/Dismiss functionality requires backend endpoints to be fully implemented.');
-                      }}>
-                        <MoreVertical size={14} />
-                      </button>
-                    </div>
                   )}
                 </div>
               ))}
