@@ -5,7 +5,7 @@
   border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -103,6 +103,7 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--space-2) 0;
+  padding-bottom: calc(var(--space-6) + 56px);
 }
 
 .sidebar-section {
@@ -208,6 +209,9 @@
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-sidebar);
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
 }
 
 .user-info {
@@ -271,9 +275,5 @@
 
   .sidebar-footer {
     padding: var(--space-3);
-  }
-
-  .sidebar-footer .btn-icon {
-    display: none;
   }
 }
