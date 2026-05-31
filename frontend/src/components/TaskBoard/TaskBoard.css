@@ -134,3 +134,52 @@
 .task-priority-selector .btn {
   text-transform: capitalize;
 }
+
+@media (max-width: 1024px) {
+  .task-columns {
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+    overflow-x: auto;
+    padding-bottom: var(--space-6);
+    scroll-snap-type: x proximity;
+  }
+
+  .task-column {
+    scroll-snap-align: start;
+  }
+}
+
+@media (max-width: 768px) {
+  .task-board-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .task-board-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .task-filters {
+    flex-wrap: wrap;
+  }
+
+  .task-columns {
+    grid-template-columns: 1fr;
+    overflow-x: hidden;
+    padding: var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .task-card {
+    padding: var(--space-3);
+  }
+
+  .task-title {
+    font-size: 0.8125rem;
+  }
+
+  .task-desc {
+    font-size: 0.75rem;
+  }
+}

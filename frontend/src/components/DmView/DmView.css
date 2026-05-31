@@ -80,3 +80,22 @@
   font-size: 0.6875rem;
   color: var(--text-muted);
 }
+
+@media (max-width: 768px) {
+  .dm-header,
+  .dm-search {
+    padding: var(--space-4);
+  }
+
+  .dm-user-item {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .dm-user-name {
+    font-size: 0.8125rem;
+  }
+
+  .dm-user-email {
+    font-size: 0.625rem;
+  }
+}

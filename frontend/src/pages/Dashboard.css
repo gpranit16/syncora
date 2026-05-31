@@ -20,6 +20,16 @@
   overflow: hidden;
 }
 
+@media (max-width: 768px) {
+  .dashboard-content {
+    flex-direction: column;
+  }
+
+  .welcome-inner {
+    padding: var(--space-5);
+  }
+}
+
 /* Welcome Panel */
 .welcome-panel {
   flex: 1;

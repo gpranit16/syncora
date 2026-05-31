@@ -261,10 +261,10 @@
     bottom: 0;
     left: 0;
     z-index: 1000;
-    width: 85vw;
-    max-width: 320px;
+    width: min(90vw, 320px);
     transform: translateX(-100%);
     transition: transform 0.3s ease;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.4);
   }
   
   .sidebar.open {
@@ -277,5 +277,9 @@
 
   .sidebar-footer {
     padding: var(--space-3);
+  }
+
+  .channel-item {
+    font-size: 0.75rem;
   }
 }

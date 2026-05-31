@@ -223,6 +223,88 @@
   cursor: not-allowed;
 }
 
+.members-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: 4;
+}
+
+.chat-members-panel {
+  z-index: 5;
+  animation: slideInMembers 200ms ease;
+}
+
+.members-header {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.members-header h3 {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.members-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast);
+}
+
+.member-row:hover {
+  background: var(--bg-elevated);
+}
+
+.member-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.member-role {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.members-empty {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+@keyframes slideInMembers {
+  from {
+    transform: translateX(8px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
 @media (max-width: 768px) {
   .chat-members-panel {
     position: absolute;
@@ -232,5 +314,22 @@
     background: var(--bg-panel) !important;
     z-index: 5;
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .chat-header,
+  .chat-messages,
+  .reply-banner,
+  .chat-composer {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+
+  .composer-input {
+    height: 40px;
+    font-size: 0.8125rem;
+  }
+
+  .message-text {
+    font-size: 0.8125rem;
   }
 }

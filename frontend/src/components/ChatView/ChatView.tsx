@@ -395,43 +395,42 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
 
       {/* Right Sidebar for Members */}
       {showMembers && (
-        <div className="chat-members-panel" style={{ width: 280, borderLeft: '1px solid var(--border-color)', background: 'var(--surface-base)', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '16px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3 style={{ margin: 0, fontSize: '0.875rem' }}>Members</h3>
-            <button className="btn-icon" onClick={() => setShowMembers(false)}><X size={16} /></button>
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {members.map(member => (
-              <div key={member.user_id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', borderRadius: '8px', transition: 'background-color 0.2s' }} className="member-item hover-bg">
-                <div className="avatar avatar-sm">{getInitials(member.name)}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.name}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{member.role}</div>
-                </div>
-                {member.user_id !== user?.user_id && (
-                  <button 
-                    className="btn btn-sm btn-ghost" 
-                    style={{ padding: '0 8px', fontSize: '0.75rem' }}
-                    onClick={() => onDmSelect(member.user_id, member.name)}
-                  >
-                    Message
-                  </button>
-                )}
-                {(activeWorkspace?.role === 'owner' || activeWorkspace?.role === 'admin') && member.user_id !== user?.user_id && (
-                  <div className="dropdown" style={{ position: 'relative' }}>
-                    <button className="btn-icon" onClick={(e) => {
-                      e.stopPropagation();
-                      alert('Admin/Dismiss functionality requires backend endpoints to be fully implemented.');
-                    }}>
-                      <MoreVertical size={14} />
-                    </button>
+        <>
+          <div className="members-overlay" onClick={() => setShowMembers(false)} />
+          <div className="chat-members-panel" style={{ width: 280, borderLeft: '1px solid var(--border-subtle)', background: 'var(--bg-panel)', display: 'flex', flexDirection: 'column' }}>
+            <div className="members-header">
+              <h3>Members</h3>
+              <button className="btn-icon" onClick={() => setShowMembers(false)}><X size={16} /></button>
+            </div>
+            <div className="members-list">
+              {members.map(member => (
+                <div key={member.user_id} className="member-row">
+                  <div className="avatar avatar-sm">{getInitials(member.name)}</div>
+                  <div className="member-meta">
+                    <div className="member-name">{member.name}</div>
+                    <div className="member-role">{member.role}</div>
                   </div>
-                )}
-              </div>
-            ))}
-            {members.length === 0 && <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>No members found.</div>}
+                  {member.user_id !== user?.user_id && (
+                    <button className="btn btn-sm btn-ghost" onClick={() => onDmSelect(member.user_id, member.name)}>
+                      Message
+                    </button>
+                  )}
+                  {(activeWorkspace?.role === 'owner' || activeWorkspace?.role === 'admin') && member.user_id !== user?.user_id && (
+                    <div className="member-actions">
+                      <button className="btn-icon" onClick={(e) => {
+                        e.stopPropagation();
+                        alert('Admin/Dismiss functionality requires backend endpoints to be fully implemented.');
+                      }}>
+                        <MoreVertical size={14} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {members.length === 0 && <div className="members-empty">No members found.</div>}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
