@@ -1,12 +1,13 @@
 const http = require("http");
+const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { Server } = require("socket.io");
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, ".env"), quiet: true });
 
-require("./config/db");
+const db = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const workspaceRoutes = require("./routes/workspaceRoutes");
 const channelRoutes = require("./routes/channelRoutes");
@@ -78,20 +79,54 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Start server
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+const startServer = async () => {
+  try {
+    await db.verifyConnection();
 
-// Graceful shutdown for nodemon restarts
-process.once('SIGUSR2', () => {
-  server.close(() => {
-    process.kill(process.pid, 'SIGUSR2');
-  });
-});
+    server.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Server startup aborted because TiDB is unavailable");
+    await db.close().catch(() => {});
+    process.exit(1);
+  }
+};
 
-process.on('SIGINT', () => {
-  server.close(() => {
+let isShuttingDown = false;
+
+const shutdown = (signal, restart = false) => {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+  console.log(`Received ${signal}; shutting down gracefully`);
+
+  const finishShutdown = async () => {
+    try {
+      await db.close();
+    } catch (error) {
+      console.error("Failed to close the TiDB connection pool:", error.message);
+    }
+
+    if (restart) {
+      process.kill(process.pid, signal);
+      return;
+    }
+
     process.exit(0);
-  });
-});
+  };
+
+  if (server.listening) {
+    server.close(finishShutdown);
+  } else {
+    void finishShutdown();
+  }
+};
+
+process.once("SIGUSR2", () => shutdown("SIGUSR2", true));
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+
+void startServer();
