@@ -3,9 +3,14 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { WorkspaceProvider } from './context/WorkspaceContext';
 import { UnreadProvider } from './context/UnreadContext';
+import { CallProvider } from './context/CallContext';
+import IncomingCallModal from './components/Calls/IncomingCallModal';
+import ActiveCallModal from './components/Calls/ActiveCallModal';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
+import { MeetingProvider } from './context/MeetingContext';
+import { MeetingPage } from './pages/MeetingPage';
 
 const LoadingScreen: React.FC<{ message?: string }> = ({ message = 'Loading...' }) => (
   <div className="onboarding-page">
@@ -37,12 +42,28 @@ const AppRoutes: React.FC = () => {
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
       <Route
+        path="/meet/:meetingCode"
+        element={
+          <ProtectedRoute>
+            <MeetingProvider>
+              <MeetingPage />
+            </MeetingProvider>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/*"
         element={
           <ProtectedRoute>
             <WorkspaceProvider>
               <UnreadProvider>
-                <DashboardPage />
+                <CallProvider>
+                  <MeetingProvider>
+                    <DashboardPage />
+                    <IncomingCallModal />
+                    <ActiveCallModal />
+                  </MeetingProvider>
+                </CallProvider>
               </UnreadProvider>
             </WorkspaceProvider>
           </ProtectedRoute>

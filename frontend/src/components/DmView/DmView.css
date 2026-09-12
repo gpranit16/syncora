@@ -99,3 +99,131 @@
     font-size: 0.625rem;
   }
 }
+
+/* ── DM Call Event Cards (WhatsApp-style) ─────────────────────────────────── */
+.dm-call-event-wrapper {
+  display: flex;
+  width: 100%;
+  margin: 10px 0;
+  padding: 0 16px;
+}
+
+.dm-call-event-wrapper.call-event-own {
+  justify-content: flex-end;
+}
+
+.dm-call-event-wrapper.call-event-remote {
+  justify-content: flex-start;
+}
+
+.dm-call-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  max-width: 320px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dm-call-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.dm-call-card.status-completed {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(30, 30, 46, 0.95));
+}
+
+.dm-call-card.status-completed .dm-call-icon-wrap {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.dm-call-card.status-missed,
+.dm-call-card.status-cancelled,
+.dm-call-card.status-rejected,
+.dm-call-card.status-failed {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.08), rgba(30, 30, 46, 0.95));
+}
+
+.dm-call-card.status-missed .dm-call-icon-wrap,
+.dm-call-card.status-cancelled .dm-call-icon-wrap,
+.dm-call-card.status-rejected .dm-call-icon-wrap,
+.dm-call-card.status-failed .dm-call-icon-wrap {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.dm-call-icon-wrap {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dm-call-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.dm-call-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dm-call-subtext {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.dm-call-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.dm-call-time {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dm-call-again-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.dm-call-again-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.3);
+  transform: scale(1.1);
+  color: #a5b4fc;
+}
+
+.dm-call-again-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+

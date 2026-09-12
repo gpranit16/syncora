@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { CheckSquare, Plus, ArrowUpCircle, Clock, CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { CheckSquare, Plus, ArrowUpCircle, Clock, CheckCircle2, AlertTriangle, X, MessageSquare } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { getTasks, createTask, updateTaskStatus, type Task } from '../../api/tasks';
 import { getWorkspaceMembers } from '../../api/workspaces';
 import { emitTaskAssigned } from '../../socket/socketManager';
 import { formatDistanceToNow } from 'date-fns';
+import TaskAIAssistant from '../TaskAIAssistant/TaskAIAssistant';
 import './TaskBoard.css';
 
 const TaskBoard: React.FC = () => {
@@ -16,21 +17,27 @@ const TaskBoard: React.FC = () => {
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newPriority, setNewPriority] = useState<'low' | 'medium' | 'high'>('medium');
+  const [newDueDate, setNewDueDate] = useState('');
   const [assignedTo, setAssignedTo] = useState<number | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
   const [members, setMembers] = useState<any[]>([]);
 
-  useEffect(() => {
+  const loadTasks = useCallback(() => {
     if (activeWorkspace) {
       getTasks(activeWorkspace.workspace_id)
         .then(({ data }) => setTasks(data.tasks))
         .catch(console.error);
-      
+    }
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    if (activeWorkspace) {
+      loadTasks();
       getWorkspaceMembers(activeWorkspace.workspace_id)
         .then(({ data }) => setMembers(data.members))
         .catch(console.error);
     }
-  }, [activeWorkspace]);
+  }, [activeWorkspace, loadTasks]);
 
   const handleCreate = async () => {
     if (!newTitle.trim() || !activeWorkspace) return;
@@ -41,9 +48,9 @@ const TaskBoard: React.FC = () => {
         description: newDesc.trim() || undefined,
         priority: newPriority,
         assigned_to: assignedTo || undefined,
+        due_date: newDueDate || undefined,
       });
-      const { data } = await getTasks(activeWorkspace.workspace_id);
-      setTasks(data.tasks);
+      loadTasks();
       
       if (assignedTo && assignedTo !== user?.user_id) {
         emitTaskAssigned({
@@ -57,6 +64,7 @@ const TaskBoard: React.FC = () => {
       setNewTitle('');
       setNewDesc('');
       setAssignedTo(null);
+      setNewDueDate('');
       setShowCreate(false);
     } catch (err) {
       console.error('Create task failed:', err);
@@ -107,6 +115,24 @@ const TaskBoard: React.FC = () => {
             </div>
             <h4 className="task-title">{task.title}</h4>
             {task.description && <p className="task-desc">{task.description}</p>}
+
+            {/* Source message reference */}
+            {task.source_message_id && task.source_message_type && (
+              <div
+                className="task-source-ref"
+                title={`Created from a ${task.source_message_type} message`}
+              >
+                <MessageSquare size={10} />
+                <span>Created from {task.source_message_type === 'channel' ? 'channel' : 'DM'} message</span>
+              </div>
+            )}
+
+            {task.due_date && (
+              <div className="task-meta" style={{ fontSize: '0.6875rem', marginBottom: 4 }}>
+                📅 Due: {new Date(task.due_date).toLocaleDateString()}
+              </div>
+            )}
+
             <div className="task-card-footer">
               <span className="task-meta">by {task.created_by_name}</span>
               {task.assigned_to_name && (
@@ -128,7 +154,7 @@ const TaskBoard: React.FC = () => {
   );
 
   return (
-    <div className="task-board">
+    <div className="task-board" style={{ position: 'relative' }}>
       <div className="task-board-header">
         <div className="task-board-title">
           <CheckSquare size={20} />
@@ -194,6 +220,15 @@ const TaskBoard: React.FC = () => {
                 ))}
               </div>
             </div>
+            <div className="form-group" style={{ marginTop: 16 }}>
+              <label>Due Date</label>
+              <input
+                className="input"
+                type="date"
+                value={newDueDate}
+                onChange={(e) => setNewDueDate(e.target.value)}
+              />
+            </div>
             <div style={{ marginTop: 24, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button className="btn btn-md btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
               <button className="btn btn-md btn-primary" onClick={handleCreate}>Create Task</button>
@@ -207,6 +242,9 @@ const TaskBoard: React.FC = () => {
         {renderColumn('In Progress', <ArrowUpCircle size={16} style={{ color: 'var(--accent-secondary)' }} />, 'in_progress', columns.in_progress, 'status-in-progress')}
         {renderColumn('Completed', <CheckCircle2 size={16} className="priority-low" />, 'completed', columns.completed, 'status-completed')}
       </div>
+
+      {/* Task AI Assistant – always visible in Tasks tab */}
+      <TaskAIAssistant onTasksChanged={loadTasks} />
     </div>
   );
 };

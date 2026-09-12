@@ -1,0 +1,714 @@
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from './AuthContext';
+import {
+  getSocket,
+  emitMeetingJoin,
+  emitMeetingSignal,
+  emitMeetingToggleMedia,
+  emitMeetingMuteParticipant,
+  emitMeetingUnmuteParticipant,
+  emitMeetingRemoveParticipant,
+  emitMeetingEnd,
+  emitMeetingLeave,
+} from '../socket/socketManager';
+import { Meeting, getMeetingByCode } from '../api/meetings';
+
+const ICE_SERVERS: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+  ],
+};
+
+export interface MeetingParticipantPeer {
+  socketId: string;
+  userId: number;
+  userName: string;
+  userAvatar?: string | null;
+  userEmail?: string | null;
+  role: 'host' | 'participant';
+  isMuted: boolean;
+  isCameraOff: boolean;
+  joinedAt?: string;
+}
+
+export type MeetingStatus = 'idle' | 'prejoin' | 'joining' | 'in_meeting' | 'ended' | 'error';
+
+interface MeetingContextType {
+  meeting: Meeting | null;
+  meetingStatus: MeetingStatus;
+  errorMessage: string | null;
+  localStream: MediaStream | null;
+  remoteStreams: Map<string, MediaStream>;
+  participants: Map<string, MeetingParticipantPeer>;
+  isMuted: boolean;
+  isCameraOff: boolean;
+  isHost: boolean;
+  mySocketId: string | null;
+  prepareMeeting: (meetingCode: string) => Promise<boolean>;
+  joinMeeting: (initialMuted?: boolean, initialCameraOff?: boolean) => Promise<void>;
+  leaveMeeting: () => void;
+  endMeetingForEveryone: () => Promise<void>;
+  toggleMute: () => void;
+  toggleCamera: () => Promise<void>;
+  hostMuteParticipant: (socketId: string) => void;
+  hostUnmuteParticipant: (socketId: string) => void;
+  hostRemoveParticipant: (socketId: string) => void;
+}
+
+const MeetingContext = createContext<MeetingContextType | undefined>(undefined);
+
+export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const [meeting, setMeeting] = useState<Meeting | null>(null);
+  const [meetingStatus, setMeetingStatus] = useState<MeetingStatus>('idle');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [participants, setParticipants] = useState<Map<string, MeetingParticipantPeer>>(new Map());
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isCameraOff, setIsCameraOff] = useState<boolean>(false);
+  const [mySocketId, setMySocketId] = useState<string | null>(null);
+
+  const isHost = Boolean(
+    meeting && user && (Number(meeting.host_id) === Number(user.user_id) || Number(meeting.host_user_id) === Number(user.user_id))
+  );
+
+  const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const candidateQueueRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const meetingRef = useRef<Meeting | null>(null);
+  meetingRef.current = meeting;
+
+  // Cleanup helper
+  const cleanUpMediaAndPeers = useCallback(() => {
+    // Stop local tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (_) {}
+      });
+      localStreamRef.current = null;
+    }
+    setLocalStream(null);
+
+    // Close all peer connections
+    peerConnectionsRef.current.forEach((pc) => {
+      try {
+        pc.close();
+      } catch (_) {}
+    });
+    peerConnectionsRef.current.clear();
+    candidateQueueRef.current.clear();
+
+    setRemoteStreams(new Map());
+    setParticipants(new Map());
+  }, []);
+
+  // Pre-join: Fetch meeting details and verify access
+  const prepareMeeting = useCallback(async (meetingCode: string): Promise<boolean> => {
+    try {
+      setMeetingStatus('prejoin');
+      setErrorMessage(null);
+      const data = await getMeetingByCode(meetingCode);
+      setMeeting(data);
+
+      if (data.status === 'ended') {
+        setMeetingStatus('ended');
+        setErrorMessage('This meeting has already ended.');
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to prepare meeting:', err);
+      setMeetingStatus('error');
+      setErrorMessage(err?.response?.data?.message || 'Failed to load meeting details');
+      return false;
+    }
+  }, []);
+
+  // Create a peer connection for a remote participant
+  const createPeerConnection = useCallback((remoteSocketId: string, currentLocalStream: MediaStream | null): RTCPeerConnection => {
+    if (peerConnectionsRef.current.has(remoteSocketId)) {
+      return peerConnectionsRef.current.get(remoteSocketId)!;
+    }
+
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    peerConnectionsRef.current.set(remoteSocketId, pc);
+
+    // Add local tracks
+    if (currentLocalStream) {
+      currentLocalStream.getTracks().forEach((track) => {
+        pc.addTrack(track, currentLocalStream);
+      });
+    }
+
+    // Handle ICE candidates
+    pc.onicecandidate = (event) => {
+      if (event.candidate && meetingRef.current) {
+        emitMeetingSignal({
+          meeting_code: meetingRef.current.meeting_code,
+          target_socket_id: remoteSocketId,
+          signal: {
+            type: 'ice-candidate',
+            candidate: event.candidate.toJSON(),
+          },
+        });
+      }
+    };
+
+    // Handle remote tracks
+    pc.ontrack = (event) => {
+      const [stream] = event.streams;
+      if (stream) {
+        setRemoteStreams((prev) => {
+          const updated = new Map(prev);
+          updated.set(remoteSocketId, stream);
+          return updated;
+        });
+      } else if (event.track) {
+        setRemoteStreams((prev) => {
+          const updated = new Map(prev);
+          let currentStream = updated.get(remoteSocketId);
+          if (!currentStream) {
+            currentStream = new MediaStream();
+            updated.set(remoteSocketId, currentStream);
+          }
+          currentStream.addTrack(event.track);
+          return new Map(updated);
+        });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        peerConnectionsRef.current.delete(remoteSocketId);
+        setRemoteStreams((prev) => {
+          const updated = new Map(prev);
+          updated.delete(remoteSocketId);
+          return updated;
+        });
+      }
+    };
+
+    return pc;
+  }, []);
+
+  // Join the meeting with media setup
+  const joinMeeting = useCallback(async (initialMuted = false, initialCameraOff = false) => {
+    if (!meeting || !user) return;
+
+    setMeetingStatus('joining');
+    setIsMuted(initialMuted);
+    setIsCameraOff(initialCameraOff);
+
+    const isVideoMeeting = (meeting.mode || meeting.meeting_type) === 'video';
+
+    let stream: MediaStream | null = null;
+    try {
+      if (isVideoMeeting) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: initialCameraOff ? false : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+          });
+        } catch (videoErr) {
+          console.warn('Camera access denied or unavailable, falling back to audio only', videoErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: false,
+          });
+          initialCameraOff = true;
+          setIsCameraOff(true);
+        }
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
+        initialCameraOff = true;
+        setIsCameraOff(true);
+      }
+
+      // Apply initial mute
+      if (initialMuted && stream) {
+        stream.getAudioTracks().forEach((track) => (track.enabled = false));
+      }
+
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+    } catch (mediaErr: any) {
+      console.error('Failed to get media devices:', mediaErr);
+      setMeetingStatus('error');
+      setErrorMessage('Could not access microphone or camera. Please check permissions.');
+      return;
+    }
+
+    // Join via Socket
+    emitMeetingJoin({
+      meeting_code: meeting.meeting_code,
+      user_id: user.user_id,
+      user_name: user.name || 'User',
+      user_avatar: (user as any).avatar || null,
+      user_email: user.email || null,
+      is_muted: initialMuted,
+      is_camera_off: initialCameraOff,
+    });
+  }, [meeting, user]);
+
+  // Socket event listeners for meeting room
+  useEffect(() => {
+    const socket = getSocket();
+
+    const handleMeetingJoinedSuccess = async (data: any) => {
+      setMeetingStatus('in_meeting');
+      const existingPeers: any[] = data.existing_participants || [];
+      const newParticipantsMap = new Map<string, MeetingParticipantPeer>();
+
+      existingPeers.forEach((p) => {
+        newParticipantsMap.set(p.socket_id, {
+          socketId: p.socket_id,
+          userId: p.user_id,
+          userName: p.user_name,
+          userAvatar: p.user_avatar,
+          userEmail: p.user_email,
+          role: p.role,
+          isMuted: p.is_muted,
+          isCameraOff: p.is_camera_off,
+          joinedAt: p.joined_at,
+        });
+      });
+
+      setParticipants(newParticipantsMap);
+
+      // We are the newly joined peer: create SDP offers to all existing participants in mesh
+      for (const p of existingPeers) {
+        try {
+          const pc = createPeerConnection(p.socket_id, localStreamRef.current);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          emitMeetingSignal({
+            meeting_code: meetingRef.current?.meeting_code || '',
+            target_socket_id: p.socket_id,
+            signal: {
+              type: 'offer',
+              sdp: offer.sdp,
+            },
+          });
+        } catch (err) {
+          console.error(`Failed to initiate offer to peer ${p.socket_id}:`, err);
+        }
+      }
+    };
+
+    const handleMeetingUserJoined = (data: any) => {
+      setParticipants((prev) => {
+        const updated = new Map(prev);
+        updated.set(data.socket_id, {
+          socketId: data.socket_id,
+          userId: data.user_id,
+          userName: data.user_name,
+          userAvatar: data.user_avatar,
+          userEmail: data.user_email,
+          role: data.role,
+          isMuted: data.is_muted,
+          isCameraOff: data.is_camera_off,
+          joinedAt: data.joined_at,
+        });
+        return updated;
+      });
+    };
+
+    const handleMeetingSignal = async (data: any) => {
+      const { sender_socket_id, signal } = data || {};
+      if (!sender_socket_id || !signal) return;
+
+      let pc = peerConnectionsRef.current.get(sender_socket_id);
+      if (!pc) {
+        pc = createPeerConnection(sender_socket_id, localStreamRef.current);
+      }
+
+      try {
+        if (signal.type === 'offer') {
+          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
+
+          // Process queued ICE candidates
+          const queued = candidateQueueRef.current.get(sender_socket_id) || [];
+          for (const cand of queued) {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          }
+          candidateQueueRef.current.delete(sender_socket_id);
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          emitMeetingSignal({
+            meeting_code: meetingRef.current?.meeting_code || '',
+            target_socket_id: sender_socket_id,
+            signal: {
+              type: 'answer',
+              sdp: answer.sdp,
+            },
+          });
+        } else if (signal.type === 'answer') {
+          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: signal.sdp }));
+
+          // Process queued ICE candidates
+          const queued = candidateQueueRef.current.get(sender_socket_id) || [];
+          for (const cand of queued) {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          }
+          candidateQueueRef.current.delete(sender_socket_id);
+        } else if (signal.type === 'ice-candidate') {
+          if (signal.candidate) {
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            } else {
+              const queue = candidateQueueRef.current.get(sender_socket_id) || [];
+              queue.push(signal.candidate);
+              candidateQueueRef.current.set(sender_socket_id, queue);
+            }
+          }
+        }
+      } catch (signalErr) {
+        console.error(`Signaling error with peer ${sender_socket_id}:`, signalErr);
+      }
+    };
+
+    const handleMeetingUserUpdated = (data: any) => {
+      setParticipants((prev) => {
+        const updated = new Map(prev);
+        const existing = updated.get(data.socket_id);
+        if (existing) {
+          updated.set(data.socket_id, {
+            ...existing,
+            isMuted: typeof data.is_muted === 'boolean' ? data.is_muted : existing.isMuted,
+            isCameraOff: typeof data.is_camera_off === 'boolean' ? data.is_camera_off : existing.isCameraOff,
+          });
+        }
+        return updated;
+      });
+    };
+
+    const handleMeetingUserLeft = (data: any) => {
+      const { socket_id } = data || {};
+      if (socket_id) {
+        const pc = peerConnectionsRef.current.get(socket_id);
+        if (pc) {
+          pc.close();
+          peerConnectionsRef.current.delete(socket_id);
+        }
+        candidateQueueRef.current.delete(socket_id);
+
+        setRemoteStreams((prev) => {
+          const updated = new Map(prev);
+          updated.delete(socket_id);
+          return updated;
+        });
+
+        setParticipants((prev) => {
+          const updated = new Map(prev);
+          updated.delete(socket_id);
+          return updated;
+        });
+      }
+    };
+
+    const handleMeetingForcedMute = () => {
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = false;
+        });
+      }
+      setIsMuted(true);
+      if (meetingRef.current) {
+        emitMeetingToggleMedia({
+          meeting_code: meetingRef.current.meeting_code,
+          is_muted: true,
+        });
+      }
+    };
+
+    const handleMeetingForcedUnmute = () => {
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = true;
+        });
+      }
+      setIsMuted(false);
+      if (meetingRef.current) {
+        emitMeetingToggleMedia({
+          meeting_code: meetingRef.current.meeting_code,
+          is_muted: false,
+        });
+      }
+    };
+
+    const handleMeetingRemoved = (data: any) => {
+      cleanUpMediaAndPeers();
+      setMeetingStatus('ended');
+      setErrorMessage(data?.reason || 'You were removed from the meeting by the host');
+    };
+
+    const handleMeetingEnded = (data: any) => {
+      cleanUpMediaAndPeers();
+      setMeetingStatus('ended');
+      setErrorMessage(data?.reason || 'The meeting has ended');
+    };
+
+    const handleMeetingError = (data: any) => {
+      setMeetingStatus('error');
+      setErrorMessage(data?.message || 'Meeting error occurred');
+    };
+
+    socket.on('meeting_joined_success', handleMeetingJoinedSuccess);
+    socket.on('meeting_user_joined', handleMeetingUserJoined);
+    socket.on('meeting_signal', handleMeetingSignal);
+    socket.on('meeting_user_updated', handleMeetingUserUpdated);
+    socket.on('meeting_user_left', handleMeetingUserLeft);
+    socket.on('meeting_forced_mute', handleMeetingForcedMute);
+    socket.on('meeting_forced_unmute', handleMeetingForcedUnmute);
+    socket.on('meeting_removed', handleMeetingRemoved);
+    socket.on('meeting_ended', handleMeetingEnded);
+    socket.on('meeting_error', handleMeetingError);
+
+    return () => {
+      socket.off('meeting_joined_success', handleMeetingJoinedSuccess);
+      socket.off('meeting_user_joined', handleMeetingUserJoined);
+      socket.off('meeting_signal', handleMeetingSignal);
+      socket.off('meeting_user_updated', handleMeetingUserUpdated);
+      socket.off('meeting_user_left', handleMeetingUserLeft);
+      socket.off('meeting_forced_mute', handleMeetingForcedMute);
+      socket.off('meeting_forced_unmute', handleMeetingForcedUnmute);
+      socket.off('meeting_removed', handleMeetingRemoved);
+      socket.off('meeting_ended', handleMeetingEnded);
+      socket.off('meeting_error', handleMeetingError);
+    };
+  }, [createPeerConnection, cleanUpMediaAndPeers]);
+
+  // Toggle local microphone
+  const toggleMute = useCallback(async () => {
+    const nextMuted = !isMuted;
+
+    if (!nextMuted) {
+      // User is UNMUTING: make sure a valid live audio track exists and is enabled
+      let hasLiveTrack = false;
+      if (localStreamRef.current) {
+        const audioTracks = localStreamRef.current.getAudioTracks();
+        const liveTrack = audioTracks.find((t) => t.readyState === 'live');
+        if (liveTrack) {
+          liveTrack.enabled = true;
+          hasLiveTrack = true;
+        }
+      }
+
+      if (!hasLiveTrack) {
+        // Track was lost or stopped; re-acquire fresh audio track
+        try {
+          const freshStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          });
+          const freshTrack = freshStream.getAudioTracks()[0];
+          if (freshTrack) {
+            freshTrack.enabled = true;
+            if (!localStreamRef.current) {
+              localStreamRef.current = new MediaStream([freshTrack]);
+            } else {
+              localStreamRef.current.getAudioTracks().forEach((t) => {
+                if (t.readyState === 'ended') {
+                  localStreamRef.current?.removeTrack(t);
+                }
+              });
+              localStreamRef.current.addTrack(freshTrack);
+            }
+            setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+
+            // Replace or add track in peer connections
+            peerConnectionsRef.current.forEach((pc) => {
+              const senders = pc.getSenders();
+              const audioSender = senders.find((s) => s.track?.kind === 'audio');
+              if (audioSender) {
+                audioSender.replaceTrack(freshTrack);
+              } else {
+                pc.addTrack(freshTrack, localStreamRef.current!);
+              }
+            });
+          }
+        } catch (err) {
+          console.error('Failed to re-acquire microphone track on unmute:', err);
+        }
+      }
+    } else {
+      // User is MUTING: disable all audio tracks
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((t) => {
+          t.enabled = false;
+        });
+      }
+    }
+
+    setIsMuted(nextMuted);
+
+    if (meetingRef.current) {
+      emitMeetingToggleMedia({
+        meeting_code: meetingRef.current.meeting_code,
+        is_muted: nextMuted,
+      });
+    }
+  }, [isMuted]);
+
+  // Toggle local camera
+  const toggleCamera = useCallback(async () => {
+    if (!meetingRef.current) return;
+    const isVideoMeeting = (meetingRef.current.mode || meetingRef.current.meeting_type) === 'video';
+    if (!isVideoMeeting) return;
+
+    if (localStreamRef.current) {
+      const videoTracks = localStreamRef.current.getVideoTracks();
+      if (videoTracks.length > 0) {
+        const nextCameraOff = !isCameraOff;
+        videoTracks.forEach((t) => (t.enabled = !nextCameraOff));
+        setIsCameraOff(nextCameraOff);
+
+        emitMeetingToggleMedia({
+          meeting_code: meetingRef.current.meeting_code,
+          is_camera_off: nextCameraOff,
+        });
+      } else {
+        // No video track yet: acquire one and add to peer connections
+        try {
+          const videoStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+          });
+          const newVideoTrack = videoStream.getVideoTracks()[0];
+          localStreamRef.current.addTrack(newVideoTrack);
+
+          // Add to all peer connections
+          peerConnectionsRef.current.forEach((pc) => {
+            pc.addTrack(newVideoTrack, localStreamRef.current!);
+          });
+
+          setIsCameraOff(false);
+          setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+
+          emitMeetingToggleMedia({
+            meeting_code: meetingRef.current.meeting_code,
+            is_camera_off: false,
+          });
+        } catch (err) {
+          console.error('Failed to enable camera:', err);
+        }
+      }
+    }
+  }, [isCameraOff]);
+
+  // Leave meeting
+  const leaveMeeting = useCallback(() => {
+    if (meetingRef.current) {
+      emitMeetingLeave({ meeting_code: meetingRef.current.meeting_code });
+    }
+    cleanUpMediaAndPeers();
+    setMeetingStatus('idle');
+    setMeeting(null);
+    navigate('/dashboard');
+  }, [cleanUpMediaAndPeers, navigate]);
+
+  // End meeting for everyone (Host only)
+  const endMeetingForEveryone = useCallback(async () => {
+    if (meetingRef.current && isHost) {
+      emitMeetingEnd({ meeting_code: meetingRef.current.meeting_code });
+    }
+    cleanUpMediaAndPeers();
+    setMeetingStatus('idle');
+    setMeeting(null);
+    navigate('/dashboard');
+  }, [isHost, cleanUpMediaAndPeers, navigate]);
+
+  // Host: Mute participant
+  const hostMuteParticipant = useCallback((targetSocketId: string) => {
+    if (meetingRef.current && isHost) {
+      emitMeetingMuteParticipant({
+        meeting_code: meetingRef.current.meeting_code,
+        target_socket_id: targetSocketId,
+      });
+    }
+  }, [isHost]);
+
+  // Host: Unmute participant
+  const hostUnmuteParticipant = useCallback((targetSocketId: string) => {
+    if (meetingRef.current && isHost) {
+      emitMeetingUnmuteParticipant({
+        meeting_code: meetingRef.current.meeting_code,
+        target_socket_id: targetSocketId,
+      });
+    }
+  }, [isHost]);
+
+  // Host: Remove participant
+  const hostRemoveParticipant = useCallback((targetSocketId: string) => {
+    if (meetingRef.current && isHost) {
+      emitMeetingRemoveParticipant({
+        meeting_code: meetingRef.current.meeting_code,
+        target_socket_id: targetSocketId,
+      });
+    }
+  }, [isHost]);
+
+  // Clean up on unmount or tab close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (meetingRef.current) {
+        emitMeetingLeave({ meeting_code: meetingRef.current.meeting_code });
+      }
+      cleanUpMediaAndPeers();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      cleanUpMediaAndPeers();
+    };
+  }, [cleanUpMediaAndPeers]);
+
+  return (
+    <MeetingContext.Provider
+      value={{
+        meeting,
+        meetingStatus,
+        errorMessage,
+        localStream,
+        remoteStreams,
+        participants,
+        isMuted,
+        isCameraOff,
+        isHost,
+        mySocketId,
+        prepareMeeting,
+        joinMeeting,
+        leaveMeeting,
+        endMeetingForEveryone,
+        toggleMute,
+        toggleCamera,
+        hostMuteParticipant,
+        hostUnmuteParticipant,
+        hostRemoveParticipant,
+      }}
+    >
+      {children}
+    </MeetingContext.Provider>
+  );
+};
+
+export const useMeeting = () => {
+  const context = useContext(MeetingContext);
+  if (!context) {
+    throw new Error('useMeeting must be used within a MeetingProvider');
+  }
+  return context;
+};

@@ -18,8 +18,10 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const unreadRoutes = require("./routes/unreadRoutes");
 const fileRoutes = require("./routes/fileRoutes");
 const searchRoutes = require("./routes/searchRoutes");
+const meetingRoutes = require("./routes/meetingRoutes");
 const authMiddleware = require("./middleware/authMiddleware");
 const chatSocket = require("./sockets/chatSocket");
+const aiRoutes = require("./routes/aiRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -39,6 +41,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static("uploads"));
 
 // API routes
+
 app.use("/api/auth", authRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/channels", channelRoutes);
@@ -49,6 +52,8 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/unread", unreadRoutes);
 app.use("/api/files", fileRoutes);
 app.use("/api/search", searchRoutes);
+app.use("/api/ai", aiRoutes);
+app.use("/api/meetings", meetingRoutes);
 
 app.get("/api/protected", authMiddleware, (req, res) => {
   res.status(200).json({
@@ -63,6 +68,7 @@ const io = new Server(server, {
   cors: corsOptions,
 });
 
+app.set("io", io);
 chatSocket(io);
 
 app.get("/", (req, res) => {

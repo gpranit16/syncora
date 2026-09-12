@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, Send, ArrowLeft, Edit3, Trash2, Reply, X, Paperclip } from 'lucide-react';
+import { MessageSquare, Send, ArrowLeft, Edit3, Trash2, Reply, X, Paperclip, Pin, CheckSquare, Phone, PhoneOff, PhoneMissed, Video, VideoOff, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { getDirectMessages, sendDirectMessage, getRecentDmUsers, editDirectMessage, deleteDirectMessage, type DirectMessage } from '../../api/directMessages';
+import { useCall } from '../../context/CallContext';
+import { getDirectMessages, sendDirectMessage, getRecentDmUsers, editDirectMessage, deleteDirectMessage, toggleDmMessageReaction, removeDmMessageReaction, toggleDmMessagePin, type DirectMessage } from '../../api/directMessages';
 import { uploadFile } from '../../api/files';
 import { API_BASE } from '../../api/client';
 import { globalSearch, type SearchUser } from '../../api/search';
 import { getSocket } from '../../socket/socketManager';
-import { joinDm, emitSendDm, emitMarkDmRead, emitTyping, emitStopTyping, emitDmEdited, emitDmDeleted } from '../../socket/socketManager';
+import { joinDm, emitSendDm, emitMarkDmRead, emitTyping, emitStopTyping, emitDmEdited, emitDmDeleted, emitReactionAdded, emitReactionRemoved, emitMessagePinned, emitMessageUnpinned } from '../../socket/socketManager';
 import { useAutoScroll } from '../../hooks/useSocket';
-import { formatDistanceToNow } from 'date-fns';
+import MessageReactions from '../MessageReactions/MessageReactions';
+import AIAssistantPanel from '../AIAssistantPanel/AIAssistantPanel';
+import CreateTaskFromMessageModal, { type SourceMessage } from '../CreateTaskFromMessageModal/CreateTaskFromMessageModal';
+import { applyReactionDelta } from '../../utils/reactions';
+import { formatMessageTimestamp } from '../../utils/date';
 import './DmView.css';
 
 interface DmViewProps {
@@ -18,6 +23,7 @@ interface DmViewProps {
 
 const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) => {
   const { user } = useAuth();
+  const { startCall, callState } = useCall();
   const [selectedUser, setSelectedUser] = useState<SearchUser | null>(null);
 
   useEffect(() => {
@@ -49,8 +55,10 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [showPinned, setShowPinned] = useState(false);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useAutoScroll(messages);
+  const [createTaskMsg, setCreateTaskMsg] = useState<SourceMessage | null>(null);
 
   useEffect(() => {
     if (!selectedUser) {
@@ -165,6 +173,42 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
       ));
     };
 
+    const onReactionAdded = (data: { direct_message_id: number; sender_id: number; receiver_id: number; emoji: string; user_id: number }) => {
+      if (data.user_id === user?.user_id) return; // own toggle already applied optimistically
+      setMessages((prev) => prev.map((m) =>
+        m.direct_message_id === data.direct_message_id ? applyReactionDelta(m, data, true) : m
+      ));
+    };
+
+    const onReactionRemoved = (data: { direct_message_id: number; sender_id: number; receiver_id: number; emoji: string; user_id: number }) => {
+      if (data.user_id === user?.user_id) return;
+      setMessages((prev) => prev.map((m) =>
+        m.direct_message_id === data.direct_message_id ? applyReactionDelta(m, data, false) : m
+      ));
+    };
+
+    const onPinned = (data: { direct_message_id: number; is_pinned: boolean }) => {
+      setMessages((prev) => prev.map((m) =>
+        m.direct_message_id === data.direct_message_id ? { ...m, is_pinned: data.is_pinned } : m
+      ));
+    };
+
+    const onUnpinned = (data: { direct_message_id: number }) => {
+      setMessages((prev) => prev.map((m) =>
+        m.direct_message_id === data.direct_message_id ? { ...m, is_pinned: false } : m
+      ));
+    };
+
+    const onConnect = () => {
+      joinDm(user.user_id, selectedUser.user_id);
+      // Re-sync messages (including reactions) after a disconnect/reconnect
+      getDirectMessages(selectedUser.user_id)
+        .then(({ data }) => {
+          if (data.success) setMessages(data.messages);
+        })
+        .catch(console.error);
+    };
+
     const handleOnlineUsers = (onlineIds: number[]) => {
       if (selectedUser) {
         setSelectedUser((prev) => {
@@ -187,6 +231,11 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
     socket.on('dm_edited', handleDmEdited);
     socket.on('dm_deleted', handleDmDeleted);
     socket.on('online_users', handleOnlineUsers);
+    socket.on('connect', onConnect);
+    socket.on('reaction_added', onReactionAdded);
+    socket.on('reaction_removed', onReactionRemoved);
+socket.on('message_pinned', onPinned);
+    socket.on('message_unpinned', onUnpinned);
     
     return () => { 
       socket.off('receive_dm', handler); 
@@ -195,6 +244,13 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
       socket.off('dm_edited', handleDmEdited);
       socket.off('dm_deleted', handleDmDeleted);
       socket.off('online_users', handleOnlineUsers);
+      socket.off('connect', onConnect);
+      socket.off('reaction_added', onReactionAdded);
+socket.off('message_pinned', onPinned);
+      socket.on('message_unpinned', onUnpinned);
+    socket.on('reaction_removed', onReactionRemoved);
+    socket.off('message_pinned', onPinned);
+    socket.off('message_unpinned', onUnpinned);
     };
   }, [selectedUser, user]);
 
@@ -231,10 +287,66 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
     }
   };
 
+  const handleToggleReaction = async (messageId: number, emoji: string) => {
+    if (!user) return;
+    const message = messages.find((m) => m.direct_message_id === messageId);
+    if (!message || message.is_deleted) return;
+
+    const mine = message.my_reactions?.includes(emoji) ?? false;
+
+    // Optimistic update so counts change instantly
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.direct_message_id === messageId
+          ? applyReactionDelta(m, { emoji, user_id: user.user_id }, !mine, user.user_id)
+          : m
+      )
+    );
+
+    try {
+      const { data } = mine
+        ? await removeDmMessageReaction(messageId, emoji)
+        : await toggleDmMessageReaction(messageId, emoji);
+
+      // Replace with the authoritative state returned by the server
+      if (data?.success && data?.data) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.direct_message_id === messageId
+              ? { ...m, reactions: data.data.reactions, my_reactions: data.data.my_reactions }
+              : m
+          )
+        );
+      }
+
+      const event = {
+        direct_message_id: messageId,
+        sender_id: message.sender_id,
+        receiver_id: message.receiver_id,
+        emoji,
+        user_id: user.user_id,
+      };
+      if (mine) {
+        emitReactionRemoved(event);
+      } else {
+        emitReactionAdded(event);
+      }
+    } catch (err) {
+      // Revert the optimistic update on failure
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.direct_message_id === messageId
+            ? applyReactionDelta(m, { emoji, user_id: user.user_id }, mine, user.user_id)
+            : m
+        )
+      );
+      console.error('Reaction toggle failed:', err);
+    }
+  };
+
   const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
     if (!user || !selectedUser) return;
-
     emitTyping({
       user_name: user.name,
       sender_id: user.user_id,
@@ -412,8 +524,28 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
         <div className="dm-header-info">
           <h3>{selectedUser.name}</h3>
           <span className="dm-header-email" style={{ color: selectedUser.is_online ? 'var(--success)' : 'var(--text-muted)' }}>
-            {selectedUser.is_online ? 'Online' : (selectedUser.last_seen ? `Last seen ${formatDistanceToNow(new Date(selectedUser.last_seen), { addSuffix: true })}` : 'Offline')}
+            {selectedUser.is_online ? 'Online' : (selectedUser.last_seen ? `Last seen ${formatMessageTimestamp(selectedUser.last_seen)}` : 'Offline')}
           </span>
+        </div>
+        <div className="dm-header-actions">
+          <button
+            className="dm-call-btn"
+            title="Start Voice Call"
+            disabled={callState !== 'idle'}
+            onClick={() => startCall({ user_id: selectedUser.user_id, name: selectedUser.name }, 'voice')}
+          >
+            <Phone size={14} />
+            <span>Voice Call</span>
+          </button>
+          <button
+            className="dm-call-btn"
+            title="Start Video Call"
+            disabled={callState !== 'idle'}
+            onClick={() => startCall({ user_id: selectedUser.user_id, name: selectedUser.name }, 'video')}
+          >
+            <Video size={14} />
+            <span>Video Call</span>
+          </button>
         </div>
       </div>
 
@@ -427,6 +559,103 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
         )}
         {messages.map((msg) => {
           const isOwn = msg.sender_id === user?.user_id;
+
+          // Dedicated WhatsApp-style call event rendering
+          if (msg.message_type === 'call' || msg.call_type) {
+            const isVideo = msg.call_type === 'video';
+            const status = msg.call_status || 'completed';
+            const duration = msg.call_duration || 0;
+
+            const formatCallDuration = (totalSeconds: number) => {
+              const mins = Math.floor(totalSeconds / 60);
+              const secs = totalSeconds % 60;
+              if (mins > 0) {
+                return `${mins} min ${secs} sec`;
+              }
+              return `${secs} sec`;
+            };
+
+            let title = '';
+            let subtext = '';
+            let statusClass = 'status-completed';
+            let IconComponent = isVideo ? Video : Phone;
+
+            switch (status) {
+              case 'completed':
+                title = isVideo ? 'Video call' : 'Voice call';
+                subtext = formatCallDuration(duration);
+                statusClass = 'status-completed';
+                IconComponent = isVideo ? Video : Phone;
+                break;
+              case 'missed':
+                if (isOwn) {
+                  title = isVideo ? 'Cancelled video call' : 'Cancelled voice call';
+                  statusClass = 'status-cancelled';
+                  IconComponent = isVideo ? VideoOff : PhoneOff;
+                } else {
+                  title = isVideo ? 'Missed video call' : 'Missed voice call';
+                  statusClass = 'status-missed';
+                  IconComponent = isVideo ? VideoOff : PhoneMissed;
+                }
+                break;
+              case 'cancelled':
+                title = isVideo ? 'Cancelled video call' : 'Cancelled voice call';
+                statusClass = 'status-cancelled';
+                IconComponent = isVideo ? VideoOff : PhoneOff;
+                break;
+              case 'rejected':
+                title = isVideo ? 'Video call declined' : 'Voice call declined';
+                statusClass = 'status-rejected';
+                IconComponent = isVideo ? VideoOff : PhoneOff;
+                break;
+              case 'failed':
+                title = isVideo ? 'Video call failed' : 'Voice call failed';
+                statusClass = 'status-failed';
+                IconComponent = AlertCircle;
+                break;
+              default:
+                title = isVideo ? 'Video call' : 'Voice call';
+                statusClass = 'status-completed';
+                break;
+            }
+
+            return (
+              <div
+                id={`dm-${msg.direct_message_id}`}
+                key={msg.direct_message_id}
+                className={`dm-call-event-wrapper ${isOwn ? 'call-event-own' : 'call-event-remote'}`}
+              >
+                <div className={`dm-call-card ${statusClass}`}>
+                  <div className="dm-call-icon-wrap">
+                    <IconComponent size={20} className="dm-call-icon" />
+                  </div>
+                  <div className="dm-call-details">
+                    <span className="dm-call-title">{title}</span>
+                    {subtext && <span className="dm-call-subtext">{subtext}</span>}
+                  </div>
+                  <div className="dm-call-meta">
+                    <span className="dm-call-time">
+                      {formatMessageTimestamp(msg.created_at)}
+                    </span>
+                    <button
+                      className="dm-call-again-btn"
+                      title={`Call back (${isVideo ? 'Video' : 'Voice'})`}
+                      disabled={callState !== 'idle'}
+                      onClick={() =>
+                        startCall(
+                          { user_id: selectedUser.user_id, name: selectedUser.name },
+                          isVideo ? 'video' : 'voice'
+                        )
+                      }
+                    >
+                      {isVideo ? <Video size={13} /> : <Phone size={13} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div id={`dm-${msg.direct_message_id}`} key={msg.direct_message_id} className={`message ${isOwn ? 'message-own' : ''} ${msg.is_deleted ? 'message-deleted' : ''}`}>
               <div className="avatar avatar-sm">{getInitials(msg.sender_name)}</div>
@@ -434,7 +663,7 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
                 <div className="message-meta">
                   <span className="message-sender">{msg.sender_name}</span>
                   <span className="message-time">
-                    {formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })}
+                    {formatMessageTimestamp(msg.created_at)}
                   </span>
                   {msg.is_edited && <span className="message-edited-tag">(edited)</span>}
                 </div>
@@ -499,6 +728,14 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
                   </div>
                 )}
 
+                {/* Reactions */}
+                <MessageReactions
+                  reactions={msg.reactions}
+                  myReactions={msg.my_reactions}
+                  isDeleted={Boolean(msg.is_deleted)}
+                  onToggle={(emoji) => handleToggleReaction(msg.direct_message_id, emoji)}
+                />
+
                 {/* Actions */}
                 {isOwn && !msg.is_deleted && editingId !== msg.direct_message_id && (
                   <div className="message-actions">
@@ -511,12 +748,38 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
                     <button className="btn-icon" onClick={() => setReplyTo(msg)} title="Reply">
                       <Reply size={13} />
                     </button>
+                    <button
+                      className="btn-icon"
+                      title="Create Task from this message"
+                      onClick={() => setCreateTaskMsg({
+                        id: msg.direct_message_id,
+                        text: msg.message_text,
+                        senderName: msg.sender_name,
+                        type: 'dm',
+                        dmUserId: selectedUser!.user_id,
+                      })}
+                    >
+                      <CheckSquare size={13} />
+                    </button>
                   </div>
                 )}
                 {!isOwn && !msg.is_deleted && (
                   <div className="message-actions">
                     <button className="btn-icon" onClick={() => setReplyTo(msg)} title="Reply">
                       <Reply size={13} />
+                    </button>
+                    <button
+                      className="btn-icon"
+                      title="Create Task from this message"
+                      onClick={() => setCreateTaskMsg({
+                        id: msg.direct_message_id,
+                        text: msg.message_text,
+                        senderName: msg.sender_name,
+                        type: 'dm',
+                        dmUserId: selectedUser!.user_id,
+                      })}
+                    >
+                      <CheckSquare size={13} />
                     </button>
                   </div>
                 )}
@@ -583,6 +846,18 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
           <Send size={16} />
         </button>
       </div>
+
+      {/* AI Assistant */}
+      <AIAssistantPanel contextType="dm" contextId={selectedUser.user_id} />
+
+      {/* Create Task from Message Modal */}
+      {createTaskMsg && (
+        <CreateTaskFromMessageModal
+          sourceMessage={createTaskMsg}
+          onClose={() => setCreateTaskMsg(null)}
+          onCreated={() => setCreateTaskMsg(null)}
+        />
+      )}
     </div>
   );
 };

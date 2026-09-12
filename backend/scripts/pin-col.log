@@ -1,0 +1,3 @@
+messages: is_pinned=true pinned_at=true
+direct_messages: is_pinned=true pinned_at=true
+PIN COLUMNS OK

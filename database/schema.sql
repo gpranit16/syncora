@@ -5,6 +5,8 @@ USE smart_team_collab;
 DROP TABLE IF EXISTS activity_logs;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS message_reactions;
+DROP TABLE IF EXISTS direct_message_reactions;
 DROP TABLE IF EXISTS direct_messages;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS channels;
@@ -73,6 +75,8 @@ CREATE TABLE messages (
   channel_id INT NOT NULL,
   sender_id INT NOT NULL,
   message_text TEXT NOT NULL,
+  is_pinned BOOLEAN DEFAULT FALSE,
+  pinned_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
   CONSTRAINT fk_messages_channel
@@ -92,6 +96,8 @@ CREATE TABLE direct_messages (
   receiver_id INT NOT NULL,
   message_text TEXT NOT NULL,
   is_read BOOLEAN DEFAULT FALSE,
+  is_pinned BOOLEAN DEFAULT FALSE,
+  pinned_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
   CONSTRAINT fk_direct_messages_sender
@@ -101,6 +107,46 @@ CREATE TABLE direct_messages (
 
   CONSTRAINT fk_direct_messages_receiver
     FOREIGN KEY (receiver_id)
+    REFERENCES users(user_id)
+    ON DELETE CASCADE
+);
+
+CREATE TABLE message_reactions (
+  reaction_id INT AUTO_INCREMENT PRIMARY KEY,
+  message_id INT NOT NULL,
+  user_id INT NOT NULL,
+  emoji VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT uq_message_reaction UNIQUE (message_id, user_id, emoji),
+
+  CONSTRAINT fk_message_reactions_message
+    FOREIGN KEY (message_id)
+    REFERENCES messages(message_id)
+    ON DELETE CASCADE,
+
+  CONSTRAINT fk_message_reactions_user
+    FOREIGN KEY (user_id)
+    REFERENCES users(user_id)
+    ON DELETE CASCADE
+);
+
+CREATE TABLE direct_message_reactions (
+  reaction_id INT AUTO_INCREMENT PRIMARY KEY,
+  direct_message_id INT NOT NULL,
+  user_id INT NOT NULL,
+  emoji VARCHAR(64) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT uq_dm_message_reaction UNIQUE (direct_message_id, user_id, emoji),
+
+  CONSTRAINT fk_dm_reactions_message
+    FOREIGN KEY (direct_message_id)
+    REFERENCES direct_messages(direct_message_id)
+    ON DELETE CASCADE,
+
+  CONSTRAINT fk_dm_reactions_user
+    FOREIGN KEY (user_id)
     REFERENCES users(user_id)
     ON DELETE CASCADE
 );

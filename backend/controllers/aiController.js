@@ -1,0 +1,372 @@
+const db = require('../config/db');
+
+const getNvidiaApiUrl = () => {
+  if (process.env.NVIDIA_API_URL) return process.env.NVIDIA_API_URL;
+  if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-')) {
+    return 'https://openrouter.ai/api/v1';
+  }
+  return 'https://integrate.api.nvidia.com/v1';
+};
+
+const getNvidiaModel = () => {
+  if (process.env.NVIDIA_MODEL) return process.env.NVIDIA_MODEL;
+  if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-')) {
+    return 'nvidia/nemotron-3.5-lightning:free';
+  }
+  return 'nvidia/nemotron-3.5-lightning-30b-a3b';
+};
+
+const MAX_CONTEXT_MESSAGES = 30;
+const MAX_CONTEXT_TASKS = 40;
+const MAX_PROMPT_LENGTH = 1000;
+
+/**
+ * Robust cleaner to strip all forms of leaked thinking / reasoning / chain-of-thought tokens.
+ */
+const stripThinking = (text, userQuestion = '') => {
+  if (!text || typeof text !== 'string') return '';
+  let cleaned = text;
+
+  // 1. Remove XML-style think/thought/reasoning tags (closed and unclosed)
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  cleaned = cleaned.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
+  cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
+  cleaned = cleaned.replace(/<think>[\s\S]*/gi, '');
+  cleaned = cleaned.replace(/<\/think>/gi, '');
+  cleaned = cleaned.replace(/<\/thought>/gi, '');
+
+  // 2. Remove "Here's a thinking process:" or similar lead-in blocks
+  cleaned = cleaned.replace(/Here(?:'s| is) (?:a |the )?thinking process:?[\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '');
+  cleaned = cleaned.replace(/Thinking Process:?[\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '');
+  cleaned = cleaned.replace(/Thought Process:?[\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '');
+
+  // 3. Handle step-by-step reasoning (e.g. "1. Analyze User Input:", "2. Review...", "Possible summary:", "Let's draft it:")
+  if (/1\.\s*(?:\*\*)?\s*(?:Analyze|Review|Identify|Determine|Formulate)/i.test(cleaned) ||
+      /Possible (?:summary|answer|response):/i.test(cleaned) ||
+      /Let's draft (?:it|the summary|the response):/i.test(cleaned)) {
+    
+    const draftMatch = cleaned.match(/(?:Possible (?:summary|answer|response)|Let's draft (?:it|the summary|the response))\s*[:：]?\s*\n*["'“]?([\s\S]+?)["'”]?\s*(?:\n\s*Check constraints|\n\s*Constraints:|$)/i);
+    if (draftMatch && draftMatch[1]) {
+      cleaned = draftMatch[1].trim();
+    } else {
+      const paras = cleaned.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+      const filtered = paras.filter(p => !/^(?:\d+\.|\*|Check constraints|Constraints|I'll make sure|Let's draft|Possible summary|I need to output|Analyze User Input)/i.test(p));
+      if (filtered.length > 0) {
+        cleaned = filtered[filtered.length - 1];
+      }
+    }
+  }
+
+  // 4. Remove conversational chain-of-thought blocks if the model narrates its internal decision process
+  const paragraphs = cleaned.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+  const reasoningPattern = /^(?:and tags|then final response|i'll reason|i will reason|let me reason|the user is asking|the user asked|based on the (?:context|instruction|rule)|looking at the context|to answer this question|i should respond|i will respond|let's analyze|let's see|first, i need to|determine response|analyze the request|1\.\s*analyze|2\.\s*review|3\.\s*identify|4\.\s*formulate)/i;
+
+  if (paragraphs.length > 1) {
+    const nonReasoning = paragraphs.filter(p => !reasoningPattern.test(p));
+    if (nonReasoning.length > 0) {
+      cleaned = nonReasoning.join('\n\n');
+    }
+  }
+
+  // Strip leading/trailing leftover quotes
+  cleaned = cleaned.replace(/^["'“]+|["'”]+$/g, '').trim();
+
+  // If the extracted text simply echoed the user's question, clear it
+  if (userQuestion && cleaned.toLowerCase() === userQuestion.toLowerCase().trim()) {
+    cleaned = '';
+  }
+
+  return cleaned.trim();
+};
+
+const checkChannelMembership = async (channelId, userId) => {
+  const [members] = await db.promise().query(
+    `SELECT c.channel_id, c.workspace_id
+     FROM channels c
+     INNER JOIN workspace_members wm
+       ON c.workspace_id = wm.workspace_id
+     WHERE c.channel_id = ? AND wm.user_id = ?`,
+    [channelId, userId]
+  );
+  return members[0];
+};
+
+const checkDmAccess = async (targetUserId, userId) => {
+  const [users] = await db.promise().query(
+    `SELECT user_id FROM users WHERE user_id = ?`,
+    [targetUserId]
+  );
+  return users[0];
+};
+
+const fetchChannelContext = async (channelId) => {
+  const [messages] = await db.promise().query(
+    `SELECT m.message_id, m.message_text, m.created_at,
+            u.user_id, u.name as username
+     FROM messages m
+     INNER JOIN users u ON m.sender_id = u.user_id
+     WHERE m.channel_id = ? AND m.is_deleted = FALSE
+     ORDER BY m.created_at DESC
+     LIMIT ?`,
+    [channelId, MAX_CONTEXT_MESSAGES]
+  );
+  return messages.reverse();
+};
+
+const fetchDmContext = async (targetUserId, currentUserId) => {
+  const [messages] = await db.promise().query(
+    `SELECT dm.direct_message_id as message_id, dm.message_text, dm.created_at,
+            u.user_id, u.name as username
+     FROM direct_messages dm
+     INNER JOIN users u ON dm.sender_id = u.user_id
+     WHERE (dm.sender_id = ? AND dm.receiver_id = ?)
+        OR (dm.sender_id = ? AND dm.receiver_id = ?)
+     ORDER BY dm.created_at DESC
+     LIMIT ?`,
+    [currentUserId, targetUserId, targetUserId, currentUserId, MAX_CONTEXT_MESSAGES]
+  );
+  return messages.reverse();
+};
+
+// ── Channel/DM AI ─────────────────────────────────────────────────────────────
+
+const askAI = async (req, res) => {
+  try {
+    const { question, context_type, context_id } = req.body;
+    const userId = req.user.user_id;
+
+    if (!question) {
+      return res.status(400).json({ success: false, message: 'Question is required' });
+    }
+
+    if (!process.env.NVIDIA_API_KEY) {
+      return res.status(500).json({ success: false, message: 'NVIDIA API key not configured' });
+    }
+
+    let messages = [];
+
+    if (context_type === 'channel' && context_id) {
+      const membership = await checkChannelMembership(context_id, userId);
+      if (!membership) {
+        return res.status(403).json({ success: false, message: 'Not authorized to access this channel' });
+      }
+      messages = await fetchChannelContext(context_id);
+    } else if (context_type === 'dm' && context_id) {
+      const access = await checkDmAccess(context_id, userId);
+      if (!access) {
+        return res.status(403).json({ success: false, message: 'Not authorized to access this direct message' });
+      }
+      messages = await fetchDmContext(context_id, userId);
+    }
+
+    const formattedMessages = messages.map(m => `[${m.username}]: ${m.message_text}`).join('\n');
+
+    const systemPrompt = `You are a helpful, professional AI Assistant in Syncora, a team collaboration workspace.
+Answer user questions directly and concisely based on the recent conversation context.
+RULES:
+1. Answer directly and concisely.
+2. If the user greets you (e.g. "hi", "hello"), greet them warmly and offer help.
+3. If the context does not contain enough info to answer a specific factual question, state clearly that it is not mentioned in recent messages.
+4. Output ONLY the final response. Never output internal thoughts, reasoning steps, or meta explanations.`;
+
+    const userPrompt = `Recent conversation context:
+${formattedMessages || '(No recent messages)'}
+
+User: ${question}`;
+
+    const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
+        'HTTP-Referer': 'https://syncora.app',
+        'X-Title': 'Syncora'
+      },
+      body: JSON.stringify({
+        model: getNvidiaModel(),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: 1024,
+        temperature: 0.3,
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('NVIDIA API Error:', errorText);
+      return res.status(500).json({ success: false, message: 'Failed to communicate with AI provider' });
+    }
+
+    const data = await response.json();
+    let rawAnswer = data.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
+    let answer = stripThinking(rawAnswer, question);
+    if (!answer) answer = 'Hello! How can I assist you with this conversation?';
+
+    res.json({ success: true, answer });
+  } catch (error) {
+    console.error('Error in askAI:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+// ── Task AI ────────────────────────────────────────────────────────────────────
+
+const fetchTaskContext = async (workspaceId, userId) => {
+  const [memberRows] = await db.promise().query(
+    "SELECT member_id FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+    [workspaceId, userId]
+  );
+  if (memberRows.length === 0) return null;
+
+  const [tasks] = await db.promise().query(
+    `SELECT
+       t.task_id, t.title, t.description, t.status, t.priority, t.due_date, t.created_at,
+       assigned.name AS assigned_to_name, assigned.user_id AS assigned_to,
+       creator.name AS created_by_name, creator.user_id AS created_by
+     FROM tasks t
+     LEFT JOIN users assigned ON t.assigned_to = assigned.user_id
+     INNER JOIN users creator ON t.created_by = creator.user_id
+     WHERE t.workspace_id = ?
+     ORDER BY t.created_at DESC
+     LIMIT ?`,
+    [workspaceId, MAX_CONTEXT_TASKS]
+  );
+  return tasks;
+};
+
+const formatTasksForPrompt = (tasks, currentUserName) => {
+  if (!tasks || tasks.length === 0) return '(No tasks in this workspace yet)';
+  const now = new Date();
+  return tasks.map(t => {
+    const due = t.due_date ? new Date(t.due_date) : null;
+    const overdue = due && due < now && t.status !== 'completed' ? ' [OVERDUE]' : '';
+    const assignee = t.assigned_to_name ? `→ ${t.assigned_to_name}` : '→ Unassigned';
+    const desc = t.description ? ` | Description: "${t.description}"` : '';
+    return `[#${t.task_id}] ${t.title}${desc} | ${t.status} | ${t.priority} priority | ${assignee} | Due: ${t.due_date || 'none'}${overdue}`;
+  }).join('\n');
+};
+
+/**
+ * POST /api/ai/ask-tasks
+ */
+const askTaskAI = async (req, res) => {
+  try {
+    const { question, workspace_id } = req.body;
+    const userId = req.user.user_id;
+    const userName = req.user.name || req.user.email || 'User';
+
+    if (!question) {
+      return res.status(400).json({ success: false, message: 'Question is required' });
+    }
+    if (!workspace_id) {
+      return res.status(400).json({ success: false, message: 'workspace_id is required' });
+    }
+
+    if (!process.env.NVIDIA_API_KEY) {
+      return res.status(500).json({ success: false, message: 'NVIDIA API key not configured' });
+    }
+
+    const tasks = await fetchTaskContext(workspace_id, userId);
+    if (tasks === null) {
+      return res.status(403).json({ success: false, message: 'You are not a member of this workspace' });
+    }
+
+    const [userRows] = await db.promise().query('SELECT name FROM users WHERE user_id = ?', [userId]);
+    const currentUserName = userRows[0]?.name || userName;
+
+    const formattedTasks = formatTasksForPrompt(tasks, currentUserName);
+
+    const systemPrompt = `You are an expert AI project and task management assistant in Syncora. The current user is "${currentUserName}".
+INSTRUCTIONS:
+1. If the user asks a READ query (e.g., show tasks, summarize, overdue, pending, priorities):
+   - Answer concisely and clearly based on the provided task data.
+2. If the user asks for GUIDANCE, ADVICE, or NEXT STEPS (e.g., "how should I complete this", "what should I work on first", "how to complete db migrate"):
+   - Give practical, step-by-step actionable advice relevant to the user's active/pending tasks.
+3. If the user requests a WRITE action (e.g., create, update, assign, change priority, change status):
+   - Respond ONLY with a JSON block in this exact format:
+   {"action":true,"type":"create"|"update","task_id":null|number,"fields":{"title":"...","description":"...","priority":"low"|"medium"|"high","status":"pending"|"in_progress"|"completed","assigned_to_name":"..."},"preview":"Human-readable description"}
+4. Output ONLY the response or JSON block. Never output internal thoughts or meta reasoning.`;
+
+    const userPrompt = `Workspace Tasks:
+${formattedTasks}
+
+User Request: "${question}"`;
+
+    const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
+        'HTTP-Referer': 'https://syncora.app',
+        'X-Title': 'Syncora'
+      },
+      body: JSON.stringify({
+        model: getNvidiaModel(),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: 1024,
+        temperature: 0.3,
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('NVIDIA API Error (Task AI):', errorText);
+      return res.status(500).json({ success: false, message: 'Failed to communicate with AI provider' });
+    }
+
+    const data = await response.json();
+    let rawAnswer = data.choices[0]?.message?.content || '';
+
+    // Strip thinking tags
+    rawAnswer = stripThinking(rawAnswer, question);
+
+    // Try to detect a JSON action block
+    const jsonMatch = rawAnswer.match(/\{[\s\S]*"action"\s*:\s*true[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const actionData = JSON.parse(jsonMatch[0]);
+        if (actionData.action === true) {
+          if (actionData.fields && actionData.fields.assigned_to_name) {
+            const name = actionData.fields.assigned_to_name.toLowerCase();
+            if (name === 'me' || name === currentUserName.toLowerCase()) {
+              actionData.fields.assigned_to_name = currentUserName;
+              actionData.fields._assigned_to_self = true;
+              actionData.fields._assigned_to_user_id = userId;
+            }
+          }
+          return res.json({ success: true, answer: actionData.preview || 'Action ready for confirmation.', action: actionData });
+        }
+      } catch (_) {
+        // fall through to plain text
+      }
+    }
+
+    let answer = rawAnswer.replace(/\{[\s\S]*\}/g, '').trim() || rawAnswer;
+    if (!answer) {
+      // Find the user's pending tasks to offer contextual guidance
+      const myPending = tasks.filter(t => t.status === 'pending' && (!t.assigned_to || t.assigned_to === userId));
+      if (myPending.length > 0) {
+        const topTask = myPending[0];
+        answer = `To complete **#${topTask.task_id} (${topTask.title})**:\n1. Review the task requirements: ${topTask.description || 'No description provided'}.\n2. Move the task status to **In Progress**.\n3. Execute the implementation steps and verify your changes.\n4. Mark the task as **Completed** when done.`;
+      } else {
+        answer = 'You have no urgent pending tasks right now. You can check your completed tasks or create a new one!';
+      }
+    }
+
+    res.json({ success: true, answer });
+  } catch (error) {
+    console.error('Error in askTaskAI:', error);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
+module.exports = {
+  askAI,
+  askTaskAI,
+  stripThinking,
+};

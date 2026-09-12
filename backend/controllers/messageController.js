@@ -1,4 +1,5 @@
 const db = require("../config/db");
+const { channelReactions } = require("./reactionController");
 
 const checkChannelMembership = async (channelId, userId) => {
   const [members] = await db.promise().query(
@@ -40,11 +41,12 @@ const sendMessage = async (req, res) => {
       });
     }
 
+    const now = new Date();
     const [result] = await db
       .promise()
       .query(
-        "INSERT INTO messages (channel_id, sender_id, message_text, reply_to, file_url, file_name) VALUES (?, ?, ?, ?, ?, ?)",
-        [channel_id, userId, message_text || "", reply_to || null, file_url || null, file_name || null]
+        "INSERT INTO messages (channel_id, sender_id, message_text, reply_to, file_url, file_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [channel_id, userId, message_text || "", reply_to || null, file_url || null, file_name || null, now]
       );
 
     return res.status(201).json({
@@ -57,7 +59,8 @@ const sendMessage = async (req, res) => {
         message_text,
         reply_to,
         file_url,
-        file_name
+        file_name,
+        created_at: now.toISOString(),
       },
     });
   } catch (error) {
@@ -100,9 +103,11 @@ const getChannelMessages = async (req, res) => {
       [channelId]
     );
 
+    const messagesWithReactions = await channelReactions.attachReactions(messages, userId);
+
     return res.status(200).json({
       success: true,
-      messages,
+      messages: messagesWithReactions,
     });
   } catch (error) {
     console.error("Get messages error:", error.message);

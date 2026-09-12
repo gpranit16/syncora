@@ -1,4 +1,5 @@
 const db = require("../config/db");
+const { dmReactions } = require("./reactionController");
 
 const sendDirectMessage = async (req, res) => {
   try {
@@ -39,9 +40,10 @@ const sendDirectMessage = async (req, res) => {
       });
     }
 
+    const now = new Date();
     const [result] = await db.promise().query(
-      "INSERT INTO direct_messages (sender_id, receiver_id, message_text, reply_to, file_url, file_name) VALUES (?, ?, ?, ?, ?, ?)",
-      [senderId, receiver_id, message_text || "", reply_to, file_url, file_name]
+      "INSERT INTO direct_messages (sender_id, receiver_id, message_text, reply_to, file_url, file_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [senderId, receiver_id, message_text || "", reply_to, file_url, file_name, now]
     );
 
     return res.status(201).json({
@@ -55,6 +57,7 @@ const sendDirectMessage = async (req, res) => {
         reply_to,
         file_url,
         file_name,
+        created_at: now.toISOString(),
         is_read: false,
       },
     });
@@ -114,6 +117,13 @@ const getDirectMessages = async (req, res) => {
         dm.is_edited,
         dm.is_deleted,
         dm.is_read,
+        dm.is_pinned,
+        dm.pinned_at,
+        dm.message_type,
+        dm.call_id,
+        dm.call_type,
+        dm.call_status,
+        dm.call_duration,
         dm.created_at
       FROM direct_messages dm
       INNER JOIN users sender
@@ -128,9 +138,11 @@ const getDirectMessages = async (req, res) => {
       [userId, receiverId, receiverId, userId]
     );
 
+    const messagesWithReactions = await dmReactions.attachReactions(messages, userId);
+
     return res.status(200).json({
       success: true,
-      messages,
+      messages: messagesWithReactions,
     });
   } catch (error) {
     console.error("Get direct messages error:", error.message);

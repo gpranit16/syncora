@@ -1,6 +1,9 @@
 const db = require("../config/db");
+const { recordCallHistory } = require("../services/callHistoryService");
+const { meetingSocket, handleMeetingDisconnect } = require("./meetingSocket");
 
 const onlineUsers = new Map();
+const activeCalls = new Map();
 
 const getDmRoomName = (firstId, secondId) => {
   const firstUserId = Math.min(Number(firstId), Number(secondId));
@@ -80,8 +83,36 @@ const chatSocket = (io) => {
     }
   };
 
+  // Broadcast WhatsApp-style reaction events to the right room
+  // (channel room for channel messages, DM room for direct messages).
+  const broadcastReaction = (event, data) => {
+    if (!data || typeof data !== "object") {
+      return;
+    }
+
+    if (data.channel_id) {
+      io.to(`channel_${data.channel_id}`).emit(event, data);
+      console.log(`${event} broadcast in channel_${data.channel_id}`);
+      return;
+    }
+
+    if (data.sender_id && data.receiver_id) {
+      const roomName = getDmRoomName(data.sender_id, data.receiver_id);
+      io.to(roomName).emit(event, data);
+      console.log(`${event} broadcast in ${roomName}`);
+    }
+  };
+
+  // Pin/unpin events use the same room routing as reactions.
+  const broadcastPin = (event, data) => {
+    broadcastReaction(event, data);
+  };
+
   io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
+
+    // Register meeting socket handlers
+    meetingSocket(io, socket, onlineUsers);
 
     // Online users
     socket.on("user_online", async (userId) => {
@@ -145,6 +176,24 @@ const chatSocket = (io) => {
 
       io.to(roomName).emit("message_deleted", messageData);
       console.log(`Message deleted in ${roomName}`);
+    });
+
+    // Message reactions (realtime, no page refresh needed)
+    socket.on("reaction_added", (data) => {
+      broadcastReaction("reaction_added", data);
+    });
+
+    socket.on("reaction_removed", (data) => {
+      broadcastReaction("reaction_removed", data);
+    });
+
+    // Message pinning (realtime, no page refresh needed)
+    socket.on("message_pinned", (data) => {
+      broadcastPin("message_pinned", data);
+    });
+
+    socket.on("message_unpinned", (data) => {
+      broadcastPin("message_unpinned", data);
     });
 
     // Direct message chat
@@ -274,8 +323,248 @@ const chatSocket = (io) => {
       }
     });
 
-    socket.on("disconnect", async () => {
+    // ── 1-to-1 Voice & Video Call Signaling ──────────────────────────────────
+    socket.on("call_user", async ({ receiver_id, call_type, offer }) => {
+      const callerId = onlineUsers.get(socket.id);
+      if (!callerId) {
+        socket.emit("call_error", { message: "Unauthorized: Caller is not authenticated" });
+        return;
+      }
+
+      if (!receiver_id || Number(receiver_id) === Number(callerId)) {
+        socket.emit("call_error", { message: "Invalid call recipient" });
+        return;
+      }
+
+      const normalizedReceiverId = Number(receiver_id);
+
+      try {
+        const queryRes = await db.promise().query(
+          "SELECT user_id, name, email FROM users WHERE user_id IN (?, ?)",
+          [callerId, normalizedReceiverId]
+        );
+        const users = (queryRes && Array.isArray(queryRes[0])) ? queryRes[0] : (Array.isArray(queryRes) ? queryRes : []);
+
+        const callerUser = users.find(u => u.user_id === Number(callerId));
+        const receiverUser = users.find(u => u.user_id === normalizedReceiverId);
+
+        if (!callerUser || !receiverUser) {
+          socket.emit("call_error", { message: "Recipient user not found" });
+          return;
+        }
+
+        // Check if receiver is already busy on another call
+        for (const [existingCallId, call] of activeCalls.entries()) {
+          if (
+            (call.callerId === normalizedReceiverId || call.receiverId === normalizedReceiverId) &&
+            call.status !== "ended"
+          ) {
+            socket.emit("call_rejected", {
+              call_id: existingCallId,
+              reason: "busy",
+              message: `${receiverUser.name} is currently on another call.`
+            });
+            return;
+          }
+        }
+
+        const callId = `call_${callerId}_${normalizedReceiverId}_${Date.now()}`;
+        activeCalls.set(callId, {
+          callId,
+          callerId: Number(callerId),
+          receiverId: normalizedReceiverId,
+          callType: call_type || "voice",
+          status: "ringing",
+          callerSocketId: socket.id,
+          createdAt: Date.now()
+        });
+
+        // Notify receiver room
+        io.to(`user_${normalizedReceiverId}`).emit("incoming_call", {
+          call_id: callId,
+          caller: {
+            user_id: callerUser.user_id,
+            name: callerUser.name,
+            avatar: callerUser.avatar || null
+          },
+          call_type: call_type || "voice",
+          offer: offer || null
+        });
+
+        // Notify caller that recipient's phone is ringing
+        socket.emit("call_ringing", {
+          call_id: callId,
+          receiver: {
+            user_id: receiverUser.user_id,
+            name: receiverUser.name,
+            avatar: receiverUser.avatar || null
+          },
+          call_type: call_type || "voice"
+        });
+
+        console.log(`Call initiated [${callId}]: ${callerUser.name} -> ${receiverUser.name} (${call_type || "voice"})`);
+      } catch (err) {
+        console.error("Error initiating call:", err.message);
+        socket.emit("call_error", { message: "Failed to initiate call" });
+      }
+    });
+
+    socket.on("call_accept", ({ call_id, answer }) => {
+      const receiverId = onlineUsers.get(socket.id);
+      const call = activeCalls.get(call_id);
+
+      if (!call || call.status === "ended") {
+        socket.emit("call_error", { message: "Call has expired or ended" });
+        return;
+      }
+
+      if (call.receiverId !== Number(receiverId)) {
+        socket.emit("call_error", { message: "Unauthorized to accept this call" });
+        return;
+      }
+
+      call.status = "connected";
+      call.receiverSocketId = socket.id;
+      call.startedAt = Date.now();
+
+      io.to(`user_${call.callerId}`).emit("call_accepted", {
+        call_id,
+        receiver_id: Number(receiverId),
+        answer: answer || null
+      });
+
+      console.log(`Call accepted [${call_id}] by user ${receiverId}`);
+    });
+
+    socket.on("call_reject", async ({ call_id, reason }) => {
       const userId = onlineUsers.get(socket.id);
+      const call = activeCalls.get(call_id);
+
+      if (call) {
+        activeCalls.delete(call_id);
+        const targetId = call.callerId === Number(userId) ? call.receiverId : call.callerId;
+        io.to(`user_${targetId}`).emit("call_rejected", {
+          call_id,
+          reason: reason || "declined"
+        });
+        console.log(`Call rejected [${call_id}]: User ${userId} rejected call (${reason || "declined"})`);
+
+        await recordCallHistory({
+          callId: call.callId,
+          callerId: call.callerId,
+          receiverId: call.receiverId,
+          callType: call.callType,
+          callStatus: reason === "busy" ? "missed" : "rejected",
+          duration: 0,
+          io
+        });
+      }
+    });
+
+    socket.on("webrtc_signal", ({ call_id, target_user_id, signal }) => {
+      const senderId = onlineUsers.get(socket.id);
+      if (!senderId || !target_user_id || !signal) return;
+
+      io.to(`user_${target_user_id}`).emit("webrtc_signal", {
+        call_id,
+        from_user_id: Number(senderId),
+        signal
+      });
+    });
+
+    socket.on("call_end", async ({ call_id, target_user_id, reason }) => {
+      const senderId = onlineUsers.get(socket.id);
+
+      let call = null;
+      if (call_id) {
+        call = activeCalls.get(call_id);
+        activeCalls.delete(call_id);
+      } else {
+        for (const [cId, c] of activeCalls.entries()) {
+          if (c.callerId === Number(senderId) || c.receiverId === Number(senderId)) {
+            call = c;
+            activeCalls.delete(cId);
+            break;
+          }
+        }
+      }
+
+      const activeCallId = call ? call.callId : call_id;
+
+      if (target_user_id) {
+        io.to(`user_${target_user_id}`).emit("call_ended", {
+          call_id: activeCallId,
+          reason: reason || "hung_up"
+        });
+      }
+
+      socket.emit("call_ended", { call_id: activeCallId, reason: "hung_up" });
+      console.log(`Call ended [${activeCallId || "active"}] by user ${senderId}`);
+
+      if (call) {
+        let status = "completed";
+        let duration = 0;
+
+        if (call.status === "connected" && call.startedAt) {
+          duration = Math.max(0, Math.floor((Date.now() - call.startedAt) / 1000));
+          status = "completed";
+        } else if (call.status === "ringing") {
+          status = Number(senderId) === Number(call.callerId) ? "cancelled" : "missed";
+        } else {
+          status = "cancelled";
+        }
+
+        await recordCallHistory({
+          callId: call.callId,
+          callerId: call.callerId,
+          receiverId: call.receiverId,
+          callType: call.callType,
+          callStatus: status,
+          duration,
+          io
+        });
+      }
+    });
+
+    socket.on("disconnect", async () => {
+      handleMeetingDisconnect(io, socket);
+
+      const userId = onlineUsers.get(socket.id);
+
+      // Clean up any ongoing or ringing calls for this user
+      if (userId) {
+        for (const [callId, call] of activeCalls.entries()) {
+          if (call.callerId === Number(userId) || call.receiverId === Number(userId)) {
+            const otherId = call.callerId === Number(userId) ? call.receiverId : call.callerId;
+            io.to(`user_${otherId}`).emit("call_ended", {
+              call_id: callId,
+              reason: "disconnected"
+            });
+            activeCalls.delete(callId);
+            console.log(`Call ended due to disconnect [${callId}]: user ${userId}`);
+
+            let status = "completed";
+            let duration = 0;
+
+            if (call.status === "connected" && call.startedAt) {
+              duration = Math.max(0, Math.floor((Date.now() - call.startedAt) / 1000));
+              status = "completed";
+            } else {
+              status = "failed";
+            }
+
+            await recordCallHistory({
+              callId: call.callId,
+              callerId: call.callerId,
+              receiverId: call.receiverId,
+              callType: call.callType,
+              callStatus: status,
+              duration,
+              io
+            });
+          }
+        }
+      }
 
       onlineUsers.delete(socket.id);
       io.emit("online_users", Array.from(onlineUsers.values()));

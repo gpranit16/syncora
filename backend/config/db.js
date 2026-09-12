@@ -77,6 +77,7 @@ const pool = mysql.createPool({
     10000,
     "DB_CONNECT_TIMEOUT_MS"
   ),
+  timezone: "Z",
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
 });

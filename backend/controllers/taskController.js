@@ -113,6 +113,206 @@ const createTask = async (req, res) => {
   }
 };
 
+/**
+ * Create a task from a channel message or DM — with source attribution.
+ * POST /api/tasks/create-from-message
+ */
+const createTaskFromMessage = async (req, res) => {
+  try {
+    const {
+      workspace_id,
+      title,
+      description,
+      assigned_to,
+      priority,
+      due_date,
+      // Source info
+      source_message_id,
+      source_message_type, // 'channel' | 'dm'
+      source_channel_id,    // set when type === 'channel'
+      source_dm_user_id,    // set when type === 'dm'
+    } = req.body;
+    const userId = req.user.user_id;
+
+    if (!workspace_id || !title) {
+      return res.status(400).json({ success: false, message: "workspace_id and title are required" });
+    }
+    if (!source_message_id || !source_message_type) {
+      return res.status(400).json({ success: false, message: "source_message_id and source_message_type are required" });
+    }
+    if (!["channel", "dm"].includes(source_message_type)) {
+      return res.status(400).json({ success: false, message: "Invalid source_message_type" });
+    }
+
+    const taskPriority = allowedPriorities.includes(priority) ? priority : "medium";
+
+    // 1. Verify workspace membership
+    const isMember = await checkWorkspaceMembership(workspace_id, userId);
+    if (!isMember) {
+      return res.status(403).json({ success: false, message: "You are not a member of this workspace" });
+    }
+
+    // 2. Verify access to the source message
+    if (source_message_type === "channel") {
+      if (!source_channel_id) {
+        return res.status(400).json({ success: false, message: "source_channel_id required for channel messages" });
+      }
+      // Verify user is a member of the workspace that owns the channel
+      const [channelRows] = await db.promise().query(
+        `SELECT c.channel_id FROM channels c
+         INNER JOIN workspace_members wm ON c.workspace_id = wm.workspace_id
+         WHERE c.channel_id = ? AND wm.user_id = ?`,
+        [source_channel_id, userId]
+      );
+      if (channelRows.length === 0) {
+        return res.status(403).json({ success: false, message: "Not authorized to access this channel message" });
+      }
+      // Verify the message actually exists
+      const [msgRows] = await db.promise().query(
+        "SELECT message_id FROM messages WHERE message_id = ? AND channel_id = ? AND is_deleted = FALSE",
+        [source_message_id, source_channel_id]
+      );
+      if (msgRows.length === 0) {
+        return res.status(404).json({ success: false, message: "Source message not found" });
+      }
+    } else {
+      // dm
+      if (!source_dm_user_id) {
+        return res.status(400).json({ success: false, message: "source_dm_user_id required for DM messages" });
+      }
+      // Verify the DM message is accessible by this user
+      const [dmRows] = await db.promise().query(
+        `SELECT dm.direct_message_id FROM direct_messages dm
+         WHERE dm.direct_message_id = ?
+           AND ((dm.sender_id = ? AND dm.receiver_id = ?) OR (dm.sender_id = ? AND dm.receiver_id = ?))
+           AND dm.is_deleted = FALSE`,
+        [source_message_id, userId, source_dm_user_id, source_dm_user_id, userId]
+      );
+      if (dmRows.length === 0) {
+        return res.status(403).json({ success: false, message: "Not authorized to access this DM message" });
+      }
+    }
+
+    // 3. Verify assignee is a workspace member (if provided)
+    if (assigned_to) {
+      const isAssigneeMember = await checkWorkspaceMembership(workspace_id, assigned_to);
+      if (!isAssigneeMember) {
+        return res.status(400).json({ success: false, message: "Assigned user must be a workspace member" });
+      }
+    }
+
+    // 4. Insert task with source attribution
+    const [result] = await db.promise().query(
+      `INSERT INTO tasks
+        (workspace_id, assigned_to, created_by, title, description, status, priority, due_date,
+         source_message_id, source_message_type, source_channel_id, source_dm_user_id)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+      [
+        workspace_id,
+        assigned_to || null,
+        userId,
+        title,
+        description || null,
+        taskPriority,
+        due_date || null,
+        source_message_id,
+        source_message_type,
+        source_channel_id || null,
+        source_dm_user_id || null,
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Task created from message",
+      task: {
+        task_id: result.insertId,
+        workspace_id,
+        title,
+        description: description || null,
+        status: "pending",
+        priority: taskPriority,
+        due_date: due_date || null,
+        assigned_to: assigned_to || null,
+        created_by: userId,
+        source_message_id,
+        source_message_type,
+        source_channel_id: source_channel_id || null,
+        source_dm_user_id: source_dm_user_id || null,
+      },
+    });
+  } catch (error) {
+    console.error("createTaskFromMessage error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error while creating task from message" });
+  }
+};
+
+/**
+ * Update a task's fields (title, description, priority, assignee, status).
+ * PUT /api/tasks/update/:taskId
+ */
+const updateTask = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { title, description, priority, assigned_to, status } = req.body;
+    const userId = req.user.user_id;
+
+    const [tasks] = await db.promise().query(
+      "SELECT task_id, workspace_id FROM tasks WHERE task_id = ?",
+      [taskId]
+    );
+    if (tasks.length === 0) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const task = tasks[0];
+    const isMember = await checkWorkspaceMembership(task.workspace_id, userId);
+    if (!isMember) {
+      return res.status(403).json({ success: false, message: "You are not a member of this workspace" });
+    }
+
+    // Build SET clause dynamically
+    const updates = [];
+    const values = [];
+
+    if (title !== undefined) { updates.push("title = ?"); values.push(title); }
+    if (description !== undefined) { updates.push("description = ?"); values.push(description); }
+    if (priority !== undefined) {
+      if (!allowedPriorities.includes(priority)) {
+        return res.status(400).json({ success: false, message: "Invalid priority" });
+      }
+      updates.push("priority = ?"); values.push(priority);
+    }
+    if (status !== undefined) {
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).json({ success: false, message: "Invalid status" });
+      }
+      updates.push("status = ?"); values.push(status);
+    }
+    if (assigned_to !== undefined) {
+      if (assigned_to !== null) {
+        const isAssigneeMember = await checkWorkspaceMembership(task.workspace_id, assigned_to);
+        if (!isAssigneeMember) {
+          return res.status(400).json({ success: false, message: "Assigned user must be a workspace member" });
+        }
+      }
+      updates.push("assigned_to = ?"); values.push(assigned_to);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: "No fields to update" });
+    }
+
+    values.push(taskId);
+    await db.promise().query(`UPDATE tasks SET ${updates.join(", ")} WHERE task_id = ?`, values);
+
+    return res.status(200).json({ success: true, message: "Task updated successfully", task: { task_id: Number(taskId) } });
+  } catch (error) {
+    console.error("updateTask error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error while updating task" });
+  }
+};
+
 const getWorkspaceTasks = async (req, res) => {
   try {
     const { workspaceId } = req.params;
@@ -144,6 +344,10 @@ const getWorkspaceTasks = async (req, res) => {
         t.priority,
         t.due_date,
         t.created_at,
+        t.source_message_id,
+        t.source_message_type,
+        t.source_channel_id,
+        t.source_dm_user_id,
         assigned.user_id AS assigned_to,
         assigned.name AS assigned_to_name,
         creator.user_id AS created_by,
@@ -238,6 +442,8 @@ const updateTaskStatus = async (req, res) => {
 
 module.exports = {
   createTask,
+  createTaskFromMessage,
+  updateTask,
   getWorkspaceTasks,
   updateTaskStatus,
 };

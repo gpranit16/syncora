@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, X, Zap } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useWorkspace } from '../context/WorkspaceContext';
 import { createWorkspace, getAvailableWorkspaces, joinWorkspace } from '../api/workspaces';
 import { getSocket } from '../socket/socketManager';
@@ -12,6 +13,7 @@ import type { Channel } from '../api/channels';
 import './Dashboard.css';
 
 const DashboardPage: React.FC = () => {
+  const { user } = useAuth();
   const { activeWorkspace, workspaces, refreshWorkspaces, loading } = useWorkspace();
   const [activeView, setActiveView] = useState<'channel' | 'dm' | 'tasks'>('channel');
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
@@ -72,6 +74,13 @@ const DashboardPage: React.FC = () => {
         osc.frequency.exponentialRampToValueAtTime(1046.50, ctx.currentTime + 0.1);
         gain.gain.setValueAtTime(0.5, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        osc.onended = () => {
+          try {
+            osc.disconnect();
+            gain.disconnect();
+            ctx.close().catch(() => {});
+          } catch {}
+        };
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.5);
       } catch (e) {
@@ -89,6 +98,11 @@ const DashboardPage: React.FC = () => {
     };
 
     const onReceiveDm = (msg: any) => {
+      // Do not trigger message notifications/sounds for call-history events or self-sent messages
+      if (msg.message_type === 'call' || msg.call_type || (user && msg.sender_id === user.user_id)) {
+        return;
+      }
+
       try {
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const osc = ctx.createOscillator();
@@ -100,6 +114,13 @@ const DashboardPage: React.FC = () => {
         osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1);
         gain.gain.setValueAtTime(0.1, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        osc.onended = () => {
+          try {
+            osc.disconnect();
+            gain.disconnect();
+            ctx.close().catch(() => {});
+          } catch {}
+        };
         osc.start(ctx.currentTime);
         osc.stop(ctx.currentTime + 0.2);
       } catch (e) {
@@ -120,7 +141,7 @@ const DashboardPage: React.FC = () => {
       socket.off('task_assigned', onTaskAssigned);
       socket.off('receive_dm', onReceiveDm);
     };
-  }, []);
+  }, [user]);
 
   const handleChannelSelect = (channel: Channel) => {
     setActiveChannel(channel);
