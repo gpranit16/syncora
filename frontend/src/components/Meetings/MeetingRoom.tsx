@@ -36,29 +36,72 @@ const ParticipantTile: React.FC<{
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  const hasVideoTrack = Boolean(
+    stream &&
+    stream.getVideoTracks().length > 0 &&
+    stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled !== false)
+  );
+
+  const showVideo = isVideoMeeting && !participant.isCameraOff && hasVideoTrack;
+
+  // Callback ref for remote video element
+  const setVideoNode = React.useCallback(
+    (node: HTMLVideoElement | null) => {
+      videoRef.current = node;
+      if (node && stream) {
+        if (node.srcObject !== stream) {
+          node.srcObject = stream;
+        }
+        node.play().catch((err) => console.warn('Remote video play error:', err));
+      }
+    },
+    [stream]
+  );
+
+  // Callback ref for remote audio element
+  const setAudioNode = React.useCallback(
+    (node: HTMLAudioElement | null) => {
+      audioRef.current = node;
+      if (node && stream) {
+        if (node.srcObject !== stream) {
+          node.srcObject = stream;
+        }
+        node.play().catch((err) => console.warn('Remote audio play error:', err));
+      }
+    },
+    [stream]
+  );
+
+  // Sync stream when stream or video visibility updates
   useEffect(() => {
-    if (stream) {
-      if (videoRef.current) {
+    if (videoRef.current && stream && showVideo) {
+      if (videoRef.current.srcObject !== stream) {
         videoRef.current.srcObject = stream;
       }
-      if (audioRef.current) {
+      videoRef.current.play().catch(() => {});
+    }
+  }, [stream, showVideo]);
+
+  useEffect(() => {
+    if (audioRef.current && stream) {
+      if (audioRef.current.srcObject !== stream) {
         audioRef.current.srcObject = stream;
       }
+      audioRef.current.play().catch(() => {});
     }
   }, [stream]);
 
-  const hasVideo = isVideoMeeting && !participant.isCameraOff && stream && stream.getVideoTracks().length > 0;
-
   return (
-    <div className={`meeting-tile ${hasVideo ? 'has-video' : 'avatar-only'}`}>
-      {/* Remote Audio Track is always active in background for audible playback */}
-      <audio ref={audioRef} autoPlay playsInline />
+    <div className={`meeting-tile ${showVideo ? 'has-video' : 'avatar-only'}`}>
+      {/* Remote Audio Track */}
+      <audio ref={setAudioNode} autoPlay playsInline />
 
-      {hasVideo ? (
+      {showVideo ? (
         <video
-          ref={videoRef}
+          ref={setVideoNode}
           autoPlay
           playsInline
+          muted
           className="participant-video-elem"
         />
       ) : (
@@ -149,19 +192,41 @@ const LocalTile: React.FC<{
 }> = ({ stream, userName, userAvatar, isHost, isMuted, isCameraOff, isVideoMeeting }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  useEffect(() => {
-    if (videoRef.current && stream && !isCameraOff) {
-      videoRef.current.srcObject = stream;
-    }
-  }, [stream, isCameraOff]);
+  const hasVideoTrack = Boolean(
+    stream &&
+    stream.getVideoTracks().length > 0 &&
+    stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled !== false)
+  );
 
-  const hasVideo = isVideoMeeting && !isCameraOff && stream && stream.getVideoTracks().length > 0;
+  const showVideo = isVideoMeeting && !isCameraOff && hasVideoTrack;
+
+  const setLocalVideoNode = React.useCallback(
+    (node: HTMLVideoElement | null) => {
+      videoRef.current = node;
+      if (node && stream && !isCameraOff) {
+        if (node.srcObject !== stream) {
+          node.srcObject = stream;
+        }
+        node.play().catch(() => {});
+      }
+    },
+    [stream, isCameraOff]
+  );
+
+  useEffect(() => {
+    if (videoRef.current && stream && showVideo) {
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+      }
+      videoRef.current.play().catch(() => {});
+    }
+  }, [stream, showVideo]);
 
   return (
-    <div className={`meeting-tile local-tile ${hasVideo ? 'has-video' : 'avatar-only'}`}>
-      {hasVideo ? (
+    <div className={`meeting-tile local-tile ${showVideo ? 'has-video' : 'avatar-only'}`}>
+      {showVideo ? (
         <video
-          ref={videoRef}
+          ref={setLocalVideoNode}
           autoPlay
           playsInline
           muted
@@ -635,63 +700,84 @@ export const MeetingRoom: React.FC = () => {
       </main>
 
       {/* Floating Bottom Controls Dock */}
-      <footer className="meeting-controls-dock">
-        <div className="dock-group">
+      <footer className="meeting-controls-dock" role="toolbar" aria-label="Meeting controls">
+        <div className="dock-actions-row">
           {/* Mic Toggle */}
           <button
+            type="button"
             className={`dock-btn ${isMuted ? 'danger-active' : ''}`}
             onClick={toggleMute}
             title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+            aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
           >
-            {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+            {isMuted ? <MicOff size={19} /> : <Mic size={19} />}
+            <span className="dock-btn-label">{isMuted ? 'Unmute' : 'Mute'}</span>
           </button>
 
           {/* Camera Toggle (Video meeting only) */}
           {isVideoMeeting && (
             <button
+              type="button"
               className={`dock-btn ${isCameraOff ? 'danger-active' : ''}`}
               onClick={toggleCamera}
               title={isCameraOff ? 'Turn on camera' : 'Turn off camera'}
+              aria-label={isCameraOff ? 'Turn on camera' : 'Turn off camera'}
             >
-              {isCameraOff ? <VideoOff size={20} /> : <Video size={20} />}
+              {isCameraOff ? <VideoOff size={19} /> : <Video size={19} />}
+              <span className="dock-btn-label">{isCameraOff ? 'Start Video' : 'Stop Video'}</span>
             </button>
           )}
 
-          {/* Invite Button */}
-          <button
-            className="dock-btn"
-            onClick={() => setShowInviteModal(true)}
-            title="Invite participants"
-          >
-            <UserPlus size={20} />
-          </button>
-
           {/* Participants Toggle */}
           <button
+            type="button"
             className={`dock-btn ${showRoster ? 'active' : ''}`}
             onClick={() => setShowRoster(!showRoster)}
             title="Participants"
+            aria-label="Participants list"
           >
-            <Users size={20} />
+            <div className="dock-icon-with-badge">
+              <Users size={19} />
+              <span className="dock-badge">{totalCount}</span>
+            </div>
+            <span className="dock-btn-label">People</span>
           </button>
-        </div>
 
-        <div className="dock-group">
-          {/* Leave Meeting (Individual) */}
-          <button className="dock-btn leave-btn" onClick={leaveMeeting} title="Leave meeting">
-            <PhoneOff size={20} />
-            <span>Leave</span>
+          {/* Invite Button */}
+          <button
+            type="button"
+            className="dock-btn invite-btn-dock"
+            onClick={() => setShowInviteModal(true)}
+            title="Invite participants"
+            aria-label="Invite participants"
+          >
+            <UserPlus size={19} />
+            <span className="dock-btn-label">Invite</span>
+          </button>
+
+          {/* Leave Meeting (Cut Call) */}
+          <button
+            type="button"
+            className="dock-btn leave-btn"
+            onClick={leaveMeeting}
+            title="Leave / Cut Call"
+            aria-label="Leave meeting"
+          >
+            <PhoneOff size={19} />
+            <span className="leave-text">Leave</span>
           </button>
 
           {/* Host End for Everyone */}
           {isHost && (
             <button
+              type="button"
               className="dock-btn end-all-btn"
               onClick={endMeetingForEveryone}
               title="End meeting for all participants"
+              aria-label="End meeting for all"
             >
               <Shield size={16} />
-              <span>End All</span>
+              <span className="end-text">End All</span>
             </button>
           )}
         </div>

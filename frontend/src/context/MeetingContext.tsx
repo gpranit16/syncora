@@ -19,7 +19,11 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export interface MeetingParticipantPeer {
@@ -142,9 +146,14 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     peerConnectionsRef.current.set(remoteSocketId, pc);
 
     // Add local tracks
-    if (currentLocalStream) {
-      currentLocalStream.getTracks().forEach((track) => {
-        pc.addTrack(track, currentLocalStream);
+    const activeStream = currentLocalStream || localStreamRef.current;
+    if (activeStream) {
+      activeStream.getTracks().forEach((track) => {
+        try {
+          pc.addTrack(track, activeStream);
+        } catch (e) {
+          console.warn(`[WebRTC] Failed to add track to peer ${remoteSocketId}:`, e);
+        }
       });
     }
 
@@ -164,11 +173,28 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // Handle remote tracks
     pc.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (stream) {
+      console.log(`[WebRTC] ontrack received from ${remoteSocketId}:`, event.track.kind, event.streams);
+      const incomingStream = event.streams && event.streams[0] ? event.streams[0] : null;
+
+      if (incomingStream) {
+        incomingStream.onaddtrack = () => {
+          setRemoteStreams((prev) => {
+            const updated = new Map(prev);
+            updated.set(remoteSocketId, new MediaStream(incomingStream.getTracks()));
+            return updated;
+          });
+        };
+        incomingStream.onremovetrack = () => {
+          setRemoteStreams((prev) => {
+            const updated = new Map(prev);
+            updated.set(remoteSocketId, new MediaStream(incomingStream.getTracks()));
+            return updated;
+          });
+        };
+
         setRemoteStreams((prev) => {
           const updated = new Map(prev);
-          updated.set(remoteSocketId, stream);
+          updated.set(remoteSocketId, new MediaStream(incomingStream.getTracks()));
           return updated;
         });
       } else if (event.track) {
@@ -176,16 +202,20 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           const updated = new Map(prev);
           let currentStream = updated.get(remoteSocketId);
           if (!currentStream) {
-            currentStream = new MediaStream();
-            updated.set(remoteSocketId, currentStream);
+            currentStream = new MediaStream([event.track]);
+          } else {
+            if (!currentStream.getTracks().some((t) => t.id === event.track.id)) {
+              currentStream.addTrack(event.track);
+            }
           }
-          currentStream.addTrack(event.track);
-          return new Map(updated);
+          updated.set(remoteSocketId, new MediaStream(currentStream.getTracks()));
+          return updated;
         });
       }
     };
 
     pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC] Connection state with ${remoteSocketId}: ${pc.connectionState}`);
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         peerConnectionsRef.current.delete(remoteSocketId);
         setRemoteStreams((prev) => {
@@ -338,10 +368,27 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (signal.type === 'offer') {
           await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
 
-          // Process queued ICE candidates
+          // Ensure local tracks are attached if they were missing
+          if (localStreamRef.current) {
+            const currentSenders = pc.getSenders();
+            localStreamRef.current.getTracks().forEach((track) => {
+              const hasSender = currentSenders.some((s) => s.track?.id === track.id || s.track?.kind === track.kind);
+              if (!hasSender) {
+                try {
+                  pc?.addTrack(track, localStreamRef.current!);
+                } catch (_) {}
+              }
+            });
+          }
+
+          // Process queued ICE candidates safely
           const queued = candidateQueueRef.current.get(sender_socket_id) || [];
           for (const cand of queued) {
-            await pc.addIceCandidate(new RTCIceCandidate(cand));
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (candErr) {
+              console.warn('[WebRTC] addIceCandidate error:', candErr);
+            }
           }
           candidateQueueRef.current.delete(sender_socket_id);
 
@@ -359,16 +406,24 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         } else if (signal.type === 'answer') {
           await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: signal.sdp }));
 
-          // Process queued ICE candidates
+          // Process queued ICE candidates safely
           const queued = candidateQueueRef.current.get(sender_socket_id) || [];
           for (const cand of queued) {
-            await pc.addIceCandidate(new RTCIceCandidate(cand));
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (candErr) {
+              console.warn('[WebRTC] addIceCandidate error:', candErr);
+            }
           }
           candidateQueueRef.current.delete(sender_socket_id);
         } else if (signal.type === 'ice-candidate') {
           if (signal.candidate) {
             if (pc.remoteDescription && pc.remoteDescription.type) {
-              await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+              } catch (candErr) {
+                console.warn('[WebRTC] addIceCandidate error:', candErr);
+              }
             } else {
               const queue = candidateQueueRef.current.get(sender_socket_id) || [];
               queue.push(signal.candidate);
@@ -587,20 +642,30 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
           });
           const newVideoTrack = videoStream.getVideoTracks()[0];
-          localStreamRef.current.addTrack(newVideoTrack);
+          if (newVideoTrack) {
+            localStreamRef.current.addTrack(newVideoTrack);
 
-          // Add to all peer connections
-          peerConnectionsRef.current.forEach((pc) => {
-            pc.addTrack(newVideoTrack, localStreamRef.current!);
-          });
+            // Add or replace in all peer connections
+            peerConnectionsRef.current.forEach((pc) => {
+              const senders = pc.getSenders();
+              const videoSender = senders.find((s) => s.track?.kind === 'video');
+              if (videoSender) {
+                videoSender.replaceTrack(newVideoTrack);
+              } else {
+                try {
+                  pc.addTrack(newVideoTrack, localStreamRef.current!);
+                } catch (_) {}
+              }
+            });
 
-          setIsCameraOff(false);
-          setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+            setIsCameraOff(false);
+            setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
 
-          emitMeetingToggleMedia({
-            meeting_code: meetingRef.current.meeting_code,
-            is_camera_off: false,
-          });
+            emitMeetingToggleMedia({
+              meeting_code: meetingRef.current.meeting_code,
+              is_camera_off: false,
+            });
+          }
         } catch (err) {
           console.error('Failed to enable camera:', err);
         }

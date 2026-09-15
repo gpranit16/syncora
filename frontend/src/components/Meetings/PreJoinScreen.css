@@ -1,38 +1,41 @@
 .prejoin-container {
   min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
-  background: #0f1012;
+  background: #0d0e12;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 20px 16px;
   color: #f3f4f6;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  box-sizing: border-box;
 }
 
 .prejoin-card {
-  background: #18191c;
+  background: #18191e;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 20px;
   width: 100%;
-  max-width: 900px;
-  padding: 32px;
+  max-width: 880px;
+  padding: 28px;
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
   gap: 20px;
+  box-sizing: border-box;
 }
 
 .prejoin-ended-card {
   max-width: 440px;
   text-align: center;
   align-items: center;
-  padding: 48px 32px;
+  padding: 40px 24px;
 }
 
 .prejoin-ended-icon {
-  font-size: 44px;
-  margin-bottom: 12px;
+  font-size: 40px;
+  margin-bottom: 8px;
 }
 
 .prejoin-back-btn {
@@ -56,33 +59,29 @@
 .prejoin-layout {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
-  gap: 32px;
+  gap: 28px;
   align-items: center;
-}
-
-@media (max-width: 768px) {
-  .prejoin-layout {
-    grid-template-columns: 1fr;
-  }
 }
 
 .prejoin-preview-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
 }
 
 .prejoin-video-wrapper {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #111214;
+  background: #111215;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 180px;
 }
 
 .prejoin-video-elem {
@@ -90,6 +89,7 @@
   height: 100%;
   object-fit: cover;
   transform: scaleX(-1); /* Mirror local camera */
+  display: block;
 }
 
 .prejoin-avatar-placeholder {
@@ -129,17 +129,19 @@
 
 .prejoin-media-controls {
   position: absolute;
-  bottom: 14px;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(8px);
+  background: rgba(10, 11, 14, 0.75);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   padding: 6px 12px;
   border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  z-index: 5;
 }
 
 .prejoin-control-btn {
@@ -179,12 +181,14 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  width: 100%;
 }
 
 .prejoin-meta-badges {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .prejoin-mode-badge {
@@ -193,7 +197,7 @@
   gap: 5px;
   font-size: 12px;
   font-weight: 500;
-  padding: 4px 10px;
+  padding: 3px 10px;
   border-radius: 12px;
 }
 
@@ -215,7 +219,7 @@
   gap: 4px;
   font-size: 12px;
   font-weight: 500;
-  padding: 4px 8px;
+  padding: 3px 8px;
   border-radius: 12px;
   background: rgba(168, 85, 247, 0.15);
   color: #c084fc;
@@ -224,17 +228,18 @@
 
 .prejoin-meeting-title {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   color: #f9fafb;
+  word-break: break-word;
 }
 
 .prejoin-info-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  background: #111214;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #111215;
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 12px;
 }
@@ -244,11 +249,12 @@
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  flex-wrap: wrap;
 }
 
 .info-label {
   color: #9ca3af;
-  min-width: 100px;
+  min-width: 90px;
 }
 
 .info-value {
@@ -267,13 +273,13 @@
   background: rgba(255, 255, 255, 0.08);
   padding: 2px 8px;
   border-radius: 6px;
-  font-family: monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
   color: #a5b4fc;
 }
 
 .prejoin-actions {
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .prejoin-btn-primary {
@@ -302,4 +308,42 @@
 .prejoin-btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .prejoin-container {
+    padding: 12px 10px;
+    align-items: flex-start;
+  }
+
+  .prejoin-card {
+    padding: 18px 14px;
+    border-radius: 16px;
+    gap: 16px;
+  }
+
+  .prejoin-layout {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .prejoin-meeting-title {
+    font-size: 18px;
+  }
+
+  .prejoin-video-wrapper {
+    aspect-ratio: 4 / 3;
+    min-height: 160px;
+  }
+
+  .prejoin-avatar-circle {
+    width: 60px;
+    height: 60px;
+    font-size: 24px;
+  }
+
+  .prejoin-btn-primary {
+    padding: 12px 18px;
+    font-size: 14px;
+  }
 }

@@ -254,10 +254,37 @@
   cursor: not-allowed;
 }
 
-.spin-icon {
-  animation: spin 1s linear infinite;
-}
-
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+@media (max-width: 480px) {
+  .meeting-modal-content {
+    width: 95%;
+    padding: 16px;
+    border-radius: 14px;
+  }
+
+  .meeting-mode-selector {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .mode-btn {
+    padding: 10px;
+  }
+
+  .meeting-modal-header h3 {
+    font-size: 16px;
+  }
+
+  .meeting-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .meeting-modal-actions button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
