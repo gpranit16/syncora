@@ -185,16 +185,27 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const audioTrack = activeStream.getAudioTracks()[0];
         const videoTrack = activeStream.getVideoTracks()[0];
 
-        if (audioTrack && audioTransceiver && audioTransceiver.sender) {
-          audioTransceiver.sender.replaceTrack(audioTrack).catch((e) => {
-            console.warn(`[WebRTC] replaceTrack audio error for ${remoteSocketId}:`, e);
-          });
+        if (audioTransceiver) {
+          if (audioTrack && audioTransceiver.sender) {
+            audioTransceiver.sender.replaceTrack(audioTrack).catch((e) => {
+              console.warn(`[WebRTC] replaceTrack audio error for ${remoteSocketId}:`, e);
+            });
+            audioTransceiver.direction = 'sendrecv';
+          } else {
+            audioTransceiver.direction = 'recvonly';
+          }
         }
 
-        if (videoTrack && videoTransceiver && videoTransceiver.sender) {
-          videoTransceiver.sender.replaceTrack(videoTrack).catch((e) => {
-            console.warn(`[WebRTC] replaceTrack video error for ${remoteSocketId}:`, e);
-          });
+        if (videoTransceiver) {
+          if (videoTrack && videoTransceiver.sender) {
+            videoTransceiver.sender.replaceTrack(videoTrack).catch((e) => {
+              console.warn(`[WebRTC] replaceTrack video error for ${remoteSocketId}:`, e);
+            });
+            videoTransceiver.direction = 'sendrecv';
+          } else {
+            // Offerer has camera off, but explicitly wants to receive remote video
+            videoTransceiver.direction = 'recvonly';
+          }
         }
       }
     }
@@ -422,19 +433,29 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
 
           // Ensure local tracks are attached to the matching transceivers after setting remote offer
-          if (localStreamRef.current) {
-            const audioTrack = localStreamRef.current.getAudioTracks()[0];
-            const videoTrack = localStreamRef.current.getVideoTracks()[0];
-            const transceivers = pc.getTransceivers();
+          const activeStream = localStreamRef.current;
+          const audioTrack = activeStream?.getAudioTracks()[0];
+          const videoTrack = activeStream?.getVideoTracks()[0];
+          const transceivers = pc.getTransceivers();
 
-            const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'audio' || t.sender?.track?.kind === 'audio');
-            if (audioTrack && audioTransceiver && audioTransceiver.sender) {
+          const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'audio' || t.sender?.track?.kind === 'audio');
+          if (audioTransceiver) {
+            if (audioTrack && audioTransceiver.sender) {
               await audioTransceiver.sender.replaceTrack(audioTrack);
+              audioTransceiver.direction = 'sendrecv';
+            } else {
+              audioTransceiver.direction = 'recvonly';
             }
+          }
 
-            const videoTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
-            if (videoTrack && videoTransceiver && videoTransceiver.sender) {
+          const videoTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
+          if (videoTransceiver) {
+            if (videoTrack && videoTransceiver.sender) {
               await videoTransceiver.sender.replaceTrack(videoTrack);
+              // CRITICAL: Answerer with live camera MUST set sendrecv to force sending video to offerer!
+              videoTransceiver.direction = 'sendrecv';
+            } else {
+              videoTransceiver.direction = 'recvonly';
             }
           }
 

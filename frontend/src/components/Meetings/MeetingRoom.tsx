@@ -36,78 +36,56 @@ const ParticipantTile: React.FC<{
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const hasVideoTrack = Boolean(
-    stream &&
-    stream.getVideoTracks().length > 0 &&
-    stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled !== false)
-  );
+  const videoTracks = stream ? stream.getVideoTracks() : [];
+  const hasLiveVideoTrack = videoTracks.length > 0 && videoTracks.some((t) => t.readyState === 'live');
 
-  const showVideo = isVideoMeeting && (hasVideoTrack || (!participant.isCameraOff && Boolean(stream && stream.getVideoTracks().length > 0)));
+  // Video is shown if we have a live video track OR remote participant has camera on with track
+  const showVideo = isVideoMeeting && (hasLiveVideoTrack || (!participant.isCameraOff && videoTracks.length > 0));
 
-  // Callback ref for remote video element
-  const setVideoNode = React.useCallback(
-    (node: HTMLVideoElement | null) => {
-      videoRef.current = node;
-      if (node && stream) {
-        if (node.srcObject !== stream) {
-          node.srcObject = stream;
-        }
-        node.play().catch((err) => console.warn('Remote video play error:', err));
-      }
-    },
-    [stream]
-  );
-
-  // Callback ref for remote audio element
-  const setAudioNode = React.useCallback(
-    (node: HTMLAudioElement | null) => {
-      audioRef.current = node;
-      if (node && stream) {
-        if (node.srcObject !== stream) {
-          node.srcObject = stream;
-        }
-        node.play().catch((err) => console.warn('Remote audio play error:', err));
-      }
-    },
-    [stream]
-  );
-
-  // Sync stream when stream or video visibility updates
+  // Sync stream to video element whenever stream changes or mounts
   useEffect(() => {
-    if (videoRef.current && stream && showVideo) {
-      if (videoRef.current.srcObject !== stream) {
-        videoRef.current.srcObject = stream;
+    const videoEl = videoRef.current;
+    if (videoEl && stream) {
+      if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
       }
-      videoRef.current.play().catch(() => {});
+      videoEl.play().catch((err) => {
+        console.warn('[WebRTC] Participant video play note:', err);
+      });
     }
-  }, [stream, showVideo]);
+  }, [stream]);
 
+  // Sync stream to audio element
   useEffect(() => {
-    if (audioRef.current && stream) {
-      if (audioRef.current.srcObject !== stream) {
-        audioRef.current.srcObject = stream;
+    const audioEl = audioRef.current;
+    if (audioEl && stream) {
+      if (audioEl.srcObject !== stream) {
+        audioEl.srcObject = stream;
       }
-      audioRef.current.play().catch(() => {});
+      audioEl.play().catch(() => {});
     }
   }, [stream]);
 
   return (
     <div className={`meeting-tile ${showVideo ? 'has-video' : 'avatar-only'}`}>
       {/* Remote Audio Track */}
-      <audio ref={setAudioNode} autoPlay playsInline />
+      <audio ref={audioRef} autoPlay playsInline />
 
-      {showVideo ? (
-        <video
-          ref={setVideoNode}
-          autoPlay
-          playsInline
-          muted
-          onLoadedMetadata={(e) => {
-            (e.target as HTMLVideoElement).play().catch(() => {});
-          }}
-          className="participant-video-elem"
-        />
-      ) : (
+      {/* Remote Video Track: ALWAYS in DOM like Google Meet & WhatsApp so pipeline stays hot */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        style={{ display: showVideo ? 'block' : 'none' }}
+        onLoadedMetadata={(e) => {
+          (e.target as HTMLVideoElement).play().catch(() => {});
+        }}
+        className="participant-video-elem"
+      />
+
+      {/* Avatar Display when video is not visible */}
+      {!showVideo && (
         <div className="participant-avatar-container">
           <div className="participant-avatar-circle">
             {participant.userAvatar ? (
