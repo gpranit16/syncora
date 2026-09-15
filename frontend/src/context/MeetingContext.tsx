@@ -22,6 +22,21 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:global.stun.twilio.com:3478' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelay',
+      credential: 'openrelay',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelay',
+      credential: 'openrelay',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelay',
+      credential: 'openrelay',
+    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -84,6 +99,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const candidateQueueRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const remoteStreamMapRef = useRef<Map<string, MediaStream>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
   const meetingRef = useRef<Meeting | null>(null);
   meetingRef.current = meeting;
@@ -109,6 +125,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
     peerConnectionsRef.current.clear();
     candidateQueueRef.current.clear();
+    remoteStreamMapRef.current.clear();
 
     setRemoteStreams(new Map());
     setParticipants(new Map());
@@ -137,7 +154,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   // Create a peer connection for a remote participant
-  const createPeerConnection = useCallback((remoteSocketId: string, currentLocalStream: MediaStream | null): RTCPeerConnection => {
+  const createPeerConnection = useCallback((remoteSocketId: string, currentLocalStream: MediaStream | null, isOfferer = false): RTCPeerConnection => {
     if (peerConnectionsRef.current.has(remoteSocketId)) {
       return peerConnectionsRef.current.get(remoteSocketId)!;
     }
@@ -145,30 +162,41 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const pc = new RTCPeerConnection(ICE_SERVERS);
     peerConnectionsRef.current.set(remoteSocketId, pc);
 
-    // Ensure audio & video transceivers exist so SDP offers/answers always include both media lines
-    try {
-      pc.addTransceiver('audio', { direction: 'sendrecv' });
-      pc.addTransceiver('video', { direction: 'sendrecv' });
-    } catch (tErr) {
-      console.warn('[WebRTC] addTransceiver fallback:', tErr);
-    }
-
-    // Add local tracks to senders
     const activeStream = currentLocalStream || localStreamRef.current;
-    if (activeStream) {
-      activeStream.getTracks().forEach((track) => {
-        try {
-          const senders = pc.getSenders();
-          const sender = senders.find((s) => s.track?.kind === track.kind || (s.track === null));
-          if (sender) {
-            sender.replaceTrack(track);
-          } else {
-            pc.addTrack(track, activeStream);
-          }
-        } catch (e) {
-          console.warn(`[WebRTC] Failed to add track to peer ${remoteSocketId}:`, e);
+
+    // For the offerer, prepare audio & video transceivers with 'sendrecv' direction
+    if (isOfferer) {
+      let audioTransceiver: RTCRtpTransceiver | null = null;
+      let videoTransceiver: RTCRtpTransceiver | null = null;
+
+      try {
+        audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
+      } catch (tErr) {
+        console.warn('[WebRTC] addTransceiver audio error:', tErr);
+      }
+
+      try {
+        videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
+      } catch (tErr) {
+        console.warn('[WebRTC] addTransceiver video error:', tErr);
+      }
+
+      if (activeStream) {
+        const audioTrack = activeStream.getAudioTracks()[0];
+        const videoTrack = activeStream.getVideoTracks()[0];
+
+        if (audioTrack && audioTransceiver && audioTransceiver.sender) {
+          audioTransceiver.sender.replaceTrack(audioTrack).catch((e) => {
+            console.warn(`[WebRTC] replaceTrack audio error for ${remoteSocketId}:`, e);
+          });
         }
-      });
+
+        if (videoTrack && videoTransceiver && videoTransceiver.sender) {
+          videoTransceiver.sender.replaceTrack(videoTrack).catch((e) => {
+            console.warn(`[WebRTC] replaceTrack video error for ${remoteSocketId}:`, e);
+          });
+        }
+      }
     }
 
     // Handle ICE candidates
@@ -185,53 +213,64 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     };
 
-    // Handle remote tracks
+    // Handle remote tracks and accumulate in stream
     pc.ontrack = (event) => {
-      console.log(`[WebRTC] ontrack received from ${remoteSocketId}:`, event.track.kind, event.streams);
-      const incomingStream = event.streams && event.streams[0] ? event.streams[0] : null;
+      console.log(`[WebRTC] ontrack received from ${remoteSocketId}: ${event.track.kind} (id: ${event.track.id})`, event.streams);
 
-      if (incomingStream) {
-        incomingStream.onaddtrack = () => {
-          setRemoteStreams((prev) => {
-            const updated = new Map(prev);
-            updated.set(remoteSocketId, new MediaStream(incomingStream.getTracks()));
-            return updated;
-          });
-        };
-        incomingStream.onremovetrack = () => {
-          setRemoteStreams((prev) => {
-            const updated = new Map(prev);
-            updated.set(remoteSocketId, new MediaStream(incomingStream.getTracks()));
-            return updated;
-          });
-        };
+      let streamAccumulator = remoteStreamMapRef.current.get(remoteSocketId);
+      if (!streamAccumulator) {
+        streamAccumulator = new MediaStream();
+        remoteStreamMapRef.current.set(remoteSocketId, streamAccumulator);
+      }
 
-        setRemoteStreams((prev) => {
-          const updated = new Map(prev);
-          updated.set(remoteSocketId, new MediaStream(incomingStream.getTracks()));
-          return updated;
-        });
-      } else if (event.track) {
-        setRemoteStreams((prev) => {
-          const updated = new Map(prev);
-          let currentStream = updated.get(remoteSocketId);
-          if (!currentStream) {
-            currentStream = new MediaStream([event.track]);
-          } else {
-            if (!currentStream.getTracks().some((t) => t.id === event.track.id)) {
-              currentStream.addTrack(event.track);
-            }
+      // Add single track if not already in accumulator
+      if (!streamAccumulator.getTracks().some((t) => t.id === event.track.id)) {
+        streamAccumulator.addTrack(event.track);
+      }
+
+      // If stream was attached in event, also copy any additional tracks
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach((t) => {
+          if (!streamAccumulator!.getTracks().some((ex) => ex.id === t.id)) {
+            streamAccumulator!.addTrack(t);
           }
-          updated.set(remoteSocketId, new MediaStream(currentStream.getTracks()));
-          return updated;
         });
       }
+
+      const syncRemoteStreamState = () => {
+        const currentStream = remoteStreamMapRef.current.get(remoteSocketId);
+        if (currentStream) {
+          const fresh = new MediaStream(currentStream.getTracks());
+          console.log(`[WebRTC] Synced remote stream for ${remoteSocketId}: [Audio: ${fresh.getAudioTracks().length}, Video: ${fresh.getVideoTracks().length}]`);
+          setRemoteStreams((prev) => {
+            const updated = new Map(prev);
+            updated.set(remoteSocketId, fresh);
+            return updated;
+          });
+        }
+      };
+
+      syncRemoteStreamState();
+
+      event.track.onunmute = () => {
+        console.log(`[WebRTC] Track onunmute from ${remoteSocketId}: ${event.track.kind}`);
+        syncRemoteStreamState();
+      };
+      event.track.onmute = () => {
+        console.log(`[WebRTC] Track onmute from ${remoteSocketId}: ${event.track.kind}`);
+        syncRemoteStreamState();
+      };
+      event.track.onended = () => {
+        console.log(`[WebRTC] Track onended from ${remoteSocketId}: ${event.track.kind}`);
+        syncRemoteStreamState();
+      };
     };
 
     pc.onconnectionstatechange = () => {
       console.log(`[WebRTC] Connection state with ${remoteSocketId}: ${pc.connectionState}`);
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         peerConnectionsRef.current.delete(remoteSocketId);
+        remoteStreamMapRef.current.delete(remoteSocketId);
         setRemoteStreams((prev) => {
           const updated = new Map(prev);
           updated.delete(remoteSocketId);
@@ -333,7 +372,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // We are the newly joined peer: create SDP offers to all existing participants in mesh
       for (const p of existingPeers) {
         try {
-          const pc = createPeerConnection(p.socket_id, localStreamRef.current);
+          const pc = createPeerConnection(p.socket_id, localStreamRef.current, true);
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
 
@@ -382,17 +421,21 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (signal.type === 'offer') {
           await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
 
-          // Ensure local tracks are attached if they were missing
+          // Ensure local tracks are attached to the matching transceivers after setting remote offer
           if (localStreamRef.current) {
-            const currentSenders = pc.getSenders();
-            localStreamRef.current.getTracks().forEach((track) => {
-              const hasSender = currentSenders.some((s) => s.track?.id === track.id || s.track?.kind === track.kind);
-              if (!hasSender) {
-                try {
-                  pc?.addTrack(track, localStreamRef.current!);
-                } catch (_) {}
-              }
-            });
+            const audioTrack = localStreamRef.current.getAudioTracks()[0];
+            const videoTrack = localStreamRef.current.getVideoTracks()[0];
+            const transceivers = pc.getTransceivers();
+
+            const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'audio' || t.sender?.track?.kind === 'audio');
+            if (audioTrack && audioTransceiver && audioTransceiver.sender) {
+              await audioTransceiver.sender.replaceTrack(audioTrack);
+            }
+
+            const videoTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
+            if (videoTrack && videoTransceiver && videoTransceiver.sender) {
+              await videoTransceiver.sender.replaceTrack(videoTrack);
+            }
           }
 
           // Process queued ICE candidates safely
@@ -474,6 +517,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           peerConnectionsRef.current.delete(socket_id);
         }
         candidateQueueRef.current.delete(socket_id);
+        remoteStreamMapRef.current.delete(socket_id);
 
         setRemoteStreams((prev) => {
           const updated = new Map(prev);
@@ -600,12 +644,12 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
             // Replace or add track in peer connections
             peerConnectionsRef.current.forEach((pc) => {
-              const senders = pc.getSenders();
-              const audioSender = senders.find((s) => s.track?.kind === 'audio');
-              if (audioSender) {
-                audioSender.replaceTrack(freshTrack);
-              } else {
-                pc.addTrack(freshTrack, localStreamRef.current!);
+              const transceivers = pc.getTransceivers();
+              const audioTransceiver = transceivers.find(
+                (t) => t.receiver?.track?.kind === 'audio' || t.sender?.track?.kind === 'audio'
+              );
+              if (audioTransceiver && audioTransceiver.sender) {
+                audioTransceiver.sender.replaceTrack(freshTrack).catch(() => {});
               }
             });
           }
@@ -640,35 +684,48 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     if (localStreamRef.current) {
       const videoTracks = localStreamRef.current.getVideoTracks();
-      if (videoTracks.length > 0) {
+      if (videoTracks.length > 0 && videoTracks[0].readyState === 'live') {
         const nextCameraOff = !isCameraOff;
         videoTracks.forEach((t) => (t.enabled = !nextCameraOff));
         setIsCameraOff(nextCameraOff);
+
+        // Update sender track across peer connections
+        peerConnectionsRef.current.forEach((pc) => {
+          const transceivers = pc.getTransceivers();
+          const videoTransceiver = transceivers.find(
+            (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+          );
+          if (videoTransceiver && videoTransceiver.sender) {
+            videoTransceiver.sender.replaceTrack(nextCameraOff ? null : videoTracks[0]).catch(() => {});
+          }
+        });
 
         emitMeetingToggleMedia({
           meeting_code: meetingRef.current.meeting_code,
           is_camera_off: nextCameraOff,
         });
       } else {
-        // No video track yet: acquire one and add to peer connections
+        // No video track yet or ended: acquire fresh one and attach to transceivers
         try {
           const videoStream = await navigator.mediaDevices.getUserMedia({
             video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
           });
           const newVideoTrack = videoStream.getVideoTracks()[0];
           if (newVideoTrack) {
+            localStreamRef.current.getVideoTracks().forEach((t) => {
+              localStreamRef.current?.removeTrack(t);
+            });
             localStreamRef.current.addTrack(newVideoTrack);
 
             // Add or replace in all peer connections
             peerConnectionsRef.current.forEach((pc) => {
-              const senders = pc.getSenders();
-              const videoSender = senders.find((s) => s.track?.kind === 'video');
-              if (videoSender) {
-                videoSender.replaceTrack(newVideoTrack);
-              } else {
-                try {
-                  pc.addTrack(newVideoTrack, localStreamRef.current!);
-                } catch (_) {}
+              const transceivers = pc.getTransceivers();
+              const videoTransceiver = transceivers.find(
+                (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+              );
+              if (videoTransceiver && videoTransceiver.sender) {
+                videoTransceiver.sender.replaceTrack(newVideoTrack).catch(() => {});
+                videoTransceiver.direction = 'sendrecv';
               }
             });
 

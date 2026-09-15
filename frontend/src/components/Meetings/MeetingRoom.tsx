@@ -42,7 +42,7 @@ const ParticipantTile: React.FC<{
     stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled !== false)
   );
 
-  const showVideo = isVideoMeeting && !participant.isCameraOff && hasVideoTrack;
+  const showVideo = isVideoMeeting && (hasVideoTrack || (!participant.isCameraOff && Boolean(stream && stream.getVideoTracks().length > 0)));
 
   // Callback ref for remote video element
   const setVideoNode = React.useCallback(
@@ -102,6 +102,9 @@ const ParticipantTile: React.FC<{
           autoPlay
           playsInline
           muted
+          onLoadedMetadata={(e) => {
+            (e.target as HTMLVideoElement).play().catch(() => {});
+          }}
           className="participant-video-elem"
         />
       ) : (
