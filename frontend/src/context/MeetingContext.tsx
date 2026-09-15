@@ -145,12 +145,26 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const pc = new RTCPeerConnection(ICE_SERVERS);
     peerConnectionsRef.current.set(remoteSocketId, pc);
 
-    // Add local tracks
+    // Ensure audio & video transceivers exist so SDP offers/answers always include both media lines
+    try {
+      pc.addTransceiver('audio', { direction: 'sendrecv' });
+      pc.addTransceiver('video', { direction: 'sendrecv' });
+    } catch (tErr) {
+      console.warn('[WebRTC] addTransceiver fallback:', tErr);
+    }
+
+    // Add local tracks to senders
     const activeStream = currentLocalStream || localStreamRef.current;
     if (activeStream) {
       activeStream.getTracks().forEach((track) => {
         try {
-          pc.addTrack(track, activeStream);
+          const senders = pc.getSenders();
+          const sender = senders.find((s) => s.track?.kind === track.kind || (s.track === null));
+          if (sender) {
+            sender.replaceTrack(track);
+          } else {
+            pc.addTrack(track, activeStream);
+          }
         } catch (e) {
           console.warn(`[WebRTC] Failed to add track to peer ${remoteSocketId}:`, e);
         }
