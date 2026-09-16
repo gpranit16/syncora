@@ -90,9 +90,8 @@ const executeLLMCall = async (systemPrompt, userPrompt, userQuestion = '', optio
   const candidateModels = [
     primaryModel,
     'liquid/lfm-2.5-2.6b:free',
-    'cohere/north-mini-code:free',
-    'nex-agi/nex-n2.5-pro:free',
     'z-ai/glm-5.2:free',
+    'nex-agi/nex-n2.5-mini:free',
     'nvidia/nemotron-3.5-lightning:free'
   ].filter((m, idx, arr) => arr.indexOf(m) === idx);
 

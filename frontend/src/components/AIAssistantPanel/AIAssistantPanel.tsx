@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, Send, X, Sparkles, AlertCircle, Loader2, GripHorizontal, Minimize2 } from 'lucide-react';
+import { Bot, Send, X, Sparkles, AlertCircle, Loader2, GripHorizontal, RotateCcw } from 'lucide-react';
 import { askAI } from '../../api/ai';
 import FormattedAIMessage from '../FormattedAIMessage/FormattedAIMessage';
 import './AIAssistantPanel.css';
@@ -254,6 +254,15 @@ const AIAssistantPanel: React.FC<AIAssistantPanelProps> = ({ contextType, contex
               <span>Syncora AI</span>
             </div>
             <div className="ai-header-controls">
+              {messages.length > 0 && (
+                <button
+                  className="ai-assistant-btn-icon"
+                  onClick={() => setMessages([])}
+                  title="Clear Chat / Reset"
+                >
+                  <RotateCcw size={13} />
+                </button>
+              )}
               <button
                 className="ai-assistant-btn-icon"
                 onClick={() => setIsOpen(false)}
