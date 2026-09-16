@@ -11,7 +11,7 @@ const getNvidiaApiUrl = () => {
 const getNvidiaModel = () => {
   if (process.env.NVIDIA_MODEL) return process.env.NVIDIA_MODEL;
   if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-')) {
-    return 'nvidia/nemotron-3.5-lightning:free';
+    return 'liquid/lfm-2.5-2.6b:free';
   }
   return 'nvidia/nemotron-3.5-lightning-30b-a3b';
 };
@@ -40,7 +40,10 @@ const stripThinking = (text, userQuestion = '') => {
   cleaned = cleaned.replace(/Thinking Process:?[\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '');
   cleaned = cleaned.replace(/Thought Process:?[\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '');
 
-  // 3. Handle step-by-step reasoning (e.g. "1. Analyze User Input:", "2. Review...", "Possible summary:", "Let's draft it:")
+  // 3. Remove conversational meta lead-ins (e.g. "Let's structure the answer:", "Based on the recent messages...")
+  cleaned = cleaned.replace(/^(?:Let's structure (?:the answer|the response|this)|Here's (?:how I will|how to) structure|I will (?:now )?structure|Let's organize (?:the answer|this))\s*[:：]?\s*\n*/gi, '');
+
+  // 4. Handle step-by-step reasoning (e.g. "1. Analyze User Input:", "2. Review...", "Possible summary:", "Let's draft it:")
   if (/1\.\s*(?:\*\*)?\s*(?:Analyze|Review|Identify|Determine|Formulate)/i.test(cleaned) ||
       /Possible (?:summary|answer|response):/i.test(cleaned) ||
       /Let's draft (?:it|the summary|the response):/i.test(cleaned)) {
@@ -57,7 +60,7 @@ const stripThinking = (text, userQuestion = '') => {
     }
   }
 
-  // 4. Remove conversational chain-of-thought blocks if the model narrates its internal decision process
+  // 5. Remove conversational chain-of-thought blocks if the model narrates its internal decision process
   const paragraphs = cleaned.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   const reasoningPattern = /^(?:and tags|then final response|i'll reason|i will reason|let me reason|the user is asking|the user asked|based on the (?:context|instruction|rule)|looking at the context|to answer this question|i should respond|i will respond|let's analyze|let's see|first, i need to|determine response|analyze the request|1\.\s*analyze|2\.\s*review|3\.\s*identify|4\.\s*formulate)/i;
 
@@ -77,6 +80,70 @@ const stripThinking = (text, userQuestion = '') => {
   }
 
   return cleaned.trim();
+};
+
+/**
+ * Fast LLM execution helper with multi-model fallback and per-request timeout.
+ */
+const executeLLMCall = async (systemPrompt, userPrompt, userQuestion = '', options = {}) => {
+  const primaryModel = getNvidiaModel();
+  const candidateModels = [
+    primaryModel,
+    'liquid/lfm-2.5-2.6b:free',
+    'z-ai/glm-5.2:free',
+    'nex-agi/nex-n2.5-mini:free',
+    'nvidia/nemotron-3.5-lightning:free'
+  ].filter((m, idx, arr) => arr.indexOf(m) === idx);
+
+  let lastError = null;
+  const timeoutMs = options.timeoutMs || 10000;
+
+  for (const model of candidateModels) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
+          'HTTP-Referer': 'https://syncora.app',
+          'X-Title': 'Syncora'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: options.max_tokens || 800,
+          temperature: options.temperature !== undefined ? options.temperature : 0.2,
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`Model ${model} failed (${response.status}):`, errorText.slice(0, 100));
+        lastError = new Error(`Model ${model} returned ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const rawAnswer = data.choices?.[0]?.message?.content || '';
+      if (rawAnswer) {
+        return rawAnswer;
+      }
+    } catch (err) {
+      console.warn(`Model ${model} error / timeout:`, err.message);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('All AI models unavailable');
 };
 
 const checkChannelMembership = async (channelId, userId) => {
@@ -174,40 +241,14 @@ ${formattedMessages || '(No recent messages)'}
 
 User: ${question}`;
 
-    const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
-        'HTTP-Referer': 'https://syncora.app',
-        'X-Title': 'Syncora'
-      },
-      body: JSON.stringify({
-        model: getNvidiaModel(),
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        max_tokens: 1024,
-        temperature: 0.3,
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('NVIDIA API Error:', errorText);
-      return res.status(500).json({ success: false, message: 'Failed to communicate with AI provider' });
-    }
-
-    const data = await response.json();
-    let rawAnswer = data.choices[0]?.message?.content || 'Sorry, I could not generate a response.';
+    const rawAnswer = await executeLLMCall(systemPrompt, userPrompt, question);
     let answer = stripThinking(rawAnswer, question);
     if (!answer) answer = 'Hello! How can I assist you with this conversation?';
 
     res.json({ success: true, answer });
   } catch (error) {
     console.error('Error in askAI:', error);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    res.status(500).json({ success: false, message: 'AI service is temporarily unavailable. Please try again.' });
   }
 };
 
@@ -294,33 +335,13 @@ ${formattedTasks}
 
 User Request: "${question}"`;
 
-    const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
-        'HTTP-Referer': 'https://syncora.app',
-        'X-Title': 'Syncora'
-      },
-      body: JSON.stringify({
-        model: getNvidiaModel(),
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        max_tokens: 1024,
-        temperature: 0.3,
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('NVIDIA API Error (Task AI):', errorText);
+    let rawAnswer = '';
+    try {
+      rawAnswer = await executeLLMCall(systemPrompt, userPrompt, question, { max_tokens: 1024, temperature: 0.2 });
+    } catch (err) {
+      console.error('LLM Call Error (Task AI):', err.message);
       return res.status(500).json({ success: false, message: 'Failed to communicate with AI provider' });
     }
-
-    const data = await response.json();
-    let rawAnswer = data.choices[0]?.message?.content || '';
 
     // Strip thinking tags
     rawAnswer = stripThinking(rawAnswer, question);
