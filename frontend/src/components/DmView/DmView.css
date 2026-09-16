@@ -120,23 +120,21 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
-  border-radius: 16px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #0d0d10;
+  border: 1px solid #222226;
   max-width: 320px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease;
 }
 
 .dm-call-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  border-color: #3f3f46;
 }
 
 .dm-call-card.status-completed {
-  border-color: rgba(34, 197, 94, 0.3);
-  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(30, 30, 46, 0.95));
+  border-color: rgba(34, 197, 94, 0.25);
+  background: #0f1210;
 }
 
 .dm-call-card.status-completed .dm-call-icon-wrap {
@@ -148,8 +146,8 @@
 .dm-call-card.status-cancelled,
 .dm-call-card.status-rejected,
 .dm-call-card.status-failed {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.08), rgba(30, 30, 46, 0.95));
+  border-color: rgba(239, 68, 68, 0.25);
+  background: #140f10;
 }
 
 .dm-call-card.status-missed .dm-call-icon-wrap,

@@ -1,6 +1,6 @@
 import React from 'react';
 import './FormattedAIMessage.css';
-import { CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, Clock, AlertTriangle, CheckSquare, ListOrdered, Sparkles, FileText } from 'lucide-react';
 
 interface FormattedAIMessageProps {
   content: string;
@@ -9,6 +9,13 @@ interface FormattedAIMessageProps {
 export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content }) => {
   if (!content) return null;
 
+  // 1. Check if the content is JSON or wrapped in a json codeblock
+  const parsedJson = tryExtractJson(content);
+  if (parsedJson) {
+    return <StructuredJsonView data={parsedJson} />;
+  }
+
+  // 2. Otherwise, parse as enhanced markdown / text
   const lines = content.split('\n');
   const elements: React.ReactNode[] = [];
   let currentList: { type: 'ul' | 'ol'; items: string[] } | null = null;
@@ -39,7 +46,12 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
       continue;
     }
 
-    // Check for bullet list: "- ", "* ", "• "
+    // Ignore raw json delimiters if any leaked
+    if (line === '{' || line === '}' || line === '```json' || line === '```') {
+      continue;
+    }
+
+    // Bullet list: "- ", "* ", "• "
     const bulletMatch = line.match(/^[-*•]\s+(.*)$/);
     if (bulletMatch) {
       if (!currentList || currentList.type !== 'ul') {
@@ -50,7 +62,7 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
       continue;
     }
 
-    // Check for numbered list: "1. ", "2. ", etc.
+    // Numbered list: "1. ", "2. ", etc.
     const numMatch = line.match(/^\d+\.\s+(.*)$/);
     if (numMatch) {
       if (!currentList || currentList.type !== 'ol') {
@@ -63,7 +75,7 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
 
     flushList();
 
-    // Check for heading: "### Heading"
+    // Headings: "### Heading" or "**Heading:**"
     const headingMatch = line.match(/^#{1,3}\s+(.*)$/);
     if (headingMatch) {
       elements.push(
@@ -87,6 +99,127 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
   return <div className="ai-formatted-message">{elements}</div>;
 };
 
+/**
+ * Try to extract valid JSON from direct string or json codeblock
+ */
+function tryExtractJson(text: string): Record<string, any> | null {
+  const trimmed = text.trim();
+
+  // Try direct parse
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {}
+  }
+
+  // Try extracting from ```json ... ```
+  const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch && codeBlockMatch[1]) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1].trim());
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {}
+  }
+
+  // Try substring between first { and last }
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const sub = trimmed.slice(firstBrace, lastBrace + 1);
+      const parsed = JSON.parse(sub);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
+/**
+ * Clean structured UI for parsed JSON responses
+ */
+const StructuredJsonView: React.FC<{ data: Record<string, any> }> = ({ data }) => {
+  const summary = data.summary || data.answer || data.overview || data.response;
+  const keyPoints = data.key_points || data.points || data.highlights || data.decisions;
+  const actionItems = data.action_items || data.tasks || data.next_steps;
+  const blockers = data.blockers || data.issues;
+
+  return (
+    <div className="ai-structured-view">
+      {summary && (
+        <div className="ai-json-summary-card">
+          <div className="ai-json-section-header">
+            <Sparkles size={13} className="ai-json-icon" />
+            <span>Summary</span>
+          </div>
+          <p className="ai-json-summary-text">{summary}</p>
+        </div>
+      )}
+
+      {Array.isArray(keyPoints) && keyPoints.length > 0 && (
+        <div className="ai-json-section">
+          <div className="ai-json-section-header">
+            <ListOrdered size={13} className="ai-json-icon" />
+            <span>Key Points & Decisions</span>
+          </div>
+          <div className="ai-json-list">
+            {keyPoints.map((pt: any, i: number) => (
+              <div key={i} className="ai-json-list-item">
+                <span className="ai-json-bullet">•</span>
+                <span>{typeof pt === 'string' ? pt : pt.text || pt.title || JSON.stringify(pt)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {Array.isArray(actionItems) && actionItems.length > 0 && (
+        <div className="ai-json-section">
+          <div className="ai-json-section-header">
+            <CheckSquare size={13} className="ai-json-icon" />
+            <span>Action Items</span>
+          </div>
+          <div className="ai-json-tasks">
+            {actionItems.map((item: any, i: number) => {
+              const itemText = typeof item === 'string' ? item : item.task || item.title || item.description || JSON.stringify(item);
+              const assignee = typeof item === 'object' ? (item.assigned_to || item.assignee) : null;
+              return (
+                <div key={i} className="ai-json-task-row">
+                  <CheckCircle2 size={13} color="#10b981" style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div className="ai-json-task-content">
+                    <span>{itemText}</span>
+                    {assignee && <span className="ai-json-assignee">@{assignee}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {Array.isArray(blockers) && blockers.length > 0 && (
+        <div className="ai-json-section blockers">
+          <div className="ai-json-section-header">
+            <AlertTriangle size={13} className="ai-json-icon" color="#f87171" />
+            <span>Blockers</span>
+          </div>
+          <div className="ai-json-list">
+            {blockers.map((b: any, i: number) => (
+              <div key={i} className="ai-json-list-item blocker">
+                <span>{typeof b === 'string' ? b : b.text || JSON.stringify(b)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Inline token renderer for bold, code, task IDs, statuses, priorities
 function renderInline(text: string): React.ReactNode {
   const tokenRegex = /(\*\*#\d+\*\*|#\d+|\*\*[^*]+\*\*|`[^`]+`|\b(?:pending|in_progress|in progress|completed)\b|\b(?:high|medium|low)\s+priority\b)/gi;
@@ -95,7 +228,7 @@ function renderInline(text: string): React.ReactNode {
   return parts.map((part, idx) => {
     if (!part) return null;
 
-    // Task ID with bold: **#123** or #123
+    // Task ID: #123
     const idMatch = part.match(/^\*\*?(#\d+)\*\*?$/);
     if (idMatch) {
       return (

@@ -286,13 +286,18 @@ const DashboardPage: React.FC = () => {
     );
   }
 
+  const handleChannelDeleted = (deletedChannelId: number) => {
+    setActiveChannel(null);
+    localStorage.removeItem('activeChannelId');
+  };
+
   return (
     <div className="dashboard">
       <Sidebar
         activeChannelId={activeChannel?.channel_id || null}
         onChannelSelect={handleChannelSelect}
-        onDmSelect={handleDmSelect}
-        onTasksSelect={handleTasksSelect}
+        onDmSelect={() => { setActiveView('dm'); localStorage.setItem('activeView', 'dm'); }}
+        onTasksSelect={() => { setActiveView('tasks'); localStorage.setItem('activeView', 'tasks'); }}
         activeView={activeView}
         initialChannelId={preferredChannelId}
         isOpen={isMobileSidebarOpen}
@@ -302,7 +307,11 @@ const DashboardPage: React.FC = () => {
         <Header onMenuClick={() => setIsMobileSidebarOpen(true)} />
         <div className="dashboard-content">
           {activeView === 'channel' && activeChannel && (
-            <ChatView channel={activeChannel} onDmSelect={handleDmSelect} />
+            <ChatView
+              channel={activeChannel}
+              onDmSelect={handleDmSelect}
+              onChannelDeleted={handleChannelDeleted}
+            />
           )}
           {activeView === 'channel' && !activeChannel && (
             <div className="welcome-panel">

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Hash, MessageSquare, ChevronDown, Plus, Users, Settings, LogOut, CheckSquare } from 'lucide-react';
+import { Hash, MessageSquare, ChevronDown, Plus, Users, Settings, LogOut, CheckSquare, Edit2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useUnread } from '../../context/UnreadContext';
 import { getChannels, createChannel, type Channel } from '../../api/channels';
 import { addMemberToWorkspace } from '../../api/workspaces';
+import { getAvatarUrl } from '../../utils/avatar';
+import UserProfileModal from '../UserProfileModal/UserProfileModal';
 import './Sidebar.css';
 
 interface SidebarProps {
@@ -26,7 +28,47 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   const [showInviteMenu, setShowInviteMenu] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('syncora_sidebar_width');
+    return saved ? parseInt(saved, 10) : 260;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const newWidth = Math.min(Math.max(e.clientX, 200), 440);
+      setSidebarWidth(newWidth);
+      localStorage.setItem('syncora_sidebar_width', String(newWidth));
+    };
+
+    const handleMouseUp = () => {
+      if (isResizing) {
+        setIsResizing(false);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+
+    if (isResizing) {
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing]);
+
+  const handleMouseDownResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
 
   useEffect(() => {
     if (activeWorkspace) {
@@ -86,7 +128,15 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
   return (
     <>
       {isOpen && <div className="sidebar-overlay" onClick={onClose} />}
-      <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
+      <aside
+        className={`sidebar ${isOpen ? 'open' : ''}`}
+        style={{ width: sidebarWidth, minWidth: sidebarWidth }}
+      >
+        <div
+          className={`sidebar-resizer ${isResizing ? 'active' : ''}`}
+          onMouseDown={handleMouseDownResize}
+          title="Drag to resize sidebar"
+        />
         {/* Workspace Header */}
         <div className="sidebar-header" onClick={() => setShowWorkspaceMenu(!showWorkspaceMenu)}>
         <div className="workspace-icon">{activeWorkspace?.name?.[0] || 'N'}</div>
@@ -188,7 +238,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
         </div>
 
         {/* Persistent Invite Section */}
-        {activeWorkspace?.role === 'owner' && (
+        {['owner', 'admin'].includes(activeWorkspace?.role || '') && (
           <div className="sidebar-section" style={{ padding: '0 var(--space-4) var(--space-4) var(--space-4)' }}>
             <div className="section-header">
               <span className="label">INVITE MEMBER</span>
@@ -214,8 +264,21 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
 
       {/* User Footer */}
       <div className="sidebar-footer">
-        <div className="user-info">
-          <div className="avatar">{user ? getInitials(user.name) : '?'}</div>
+        <div
+          className="user-info user-profile-clickable"
+          onClick={() => setShowProfileModal(true)}
+          title="Click to edit Name, Password & Display Picture"
+        >
+          <div className="avatar">
+            {user?.avatar_url ? (
+              <img src={getAvatarUrl(user.avatar_url) || ''} alt={user.name} className="avatar-img" />
+            ) : (
+              user ? getInitials(user.name) : '?'
+            )}
+            <div className="avatar-edit-badge" title="Edit Profile">
+              <Edit2 size={10} />
+            </div>
+          </div>
           <div className="user-details">
             <span className="user-name">{user?.name}</span>
             <span className="user-status">
@@ -228,6 +291,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
           <LogOut size={16} />
         </button>
       </div>
+
+      <UserProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+      />
     </aside>
     </>
   );

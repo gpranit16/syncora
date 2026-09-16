@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Zap, Eye, EyeOff } from 'lucide-react';
+import { Zap, Eye, EyeOff, AlertCircle, ArrowRight } from 'lucide-react';
 import { loginApi } from '../api/auth';
 import { useAuth } from '../context/AuthContext';
 import './Auth.css';
@@ -16,14 +16,15 @@ const LoginPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !password) {
       setError('Email and password are required');
       return;
     }
     setError('');
     setLoading(true);
     try {
-      const { data } = await loginApi({ email, password });
+      const { data } = await loginApi({ email: cleanEmail, password });
       if (data.success && data.token && data.user) {
         login(data.user, data.token);
         navigate('/');
@@ -31,7 +32,7 @@ const LoginPage: React.FC = () => {
         setError(data.message || 'Login failed');
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Login failed. Check your credentials.');
+      setError(err.response?.data?.message || 'Invalid email or password. Please check your credentials.');
     } finally {
       setLoading(false);
     }
@@ -39,68 +40,90 @@ const LoginPage: React.FC = () => {
 
   return (
     <div className="auth-page">
-      <div className="auth-ambient" />
-      <div className="auth-container">
+      <div className="auth-card-container">
+        {/* Brand */}
         <div className="auth-brand">
-          <div className="auth-logo">
-            <Zap size={28} />
+          <div className="auth-logo-icon">
+            <Zap size={20} />
           </div>
-          <h1>NexusHub</h1>
-          <p className="auth-tagline">Command your team collaboration</p>
+          <span className="auth-brand-name">Syncora</span>
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit}>
-          <h2>Sign In</h2>
-          {error && <div className="auth-error">{error}</div>}
-
-          <div className="form-group">
-            <label htmlFor="login-email">Email</label>
-            <input
-              id="login-email"
-              className="input"
-              type="email"
-              placeholder="you@company.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-            />
+        {/* Card */}
+        <div className="auth-card">
+          <div className="auth-header">
+            <h1>Sign in to your account</h1>
+            <p>Enter your work email and password to continue.</p>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="login-password">Password</label>
-            <div className="password-wrapper">
-              <input
-                id="login-password"
-                className="input"
-                type={showPass ? 'text' : 'password'}
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-              <button
-                type="button"
-                className="password-toggle"
-                onClick={() => setShowPass(!showPass)}
-                tabIndex={-1}
-              >
-                {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
+          {error && (
+            <div className="auth-error-banner">
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <span>{error}</span>
             </div>
-          </div>
+          )}
 
-          <button
-            type="submit"
-            className="btn btn-lg btn-primary auth-submit"
-            disabled={loading}
-          >
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
+          <form className="auth-form" onSubmit={handleSubmit}>
+            <div className="auth-field">
+              <label htmlFor="login-email">Work email</label>
+              <div className="auth-input-wrapper">
+                <input
+                  id="login-email"
+                  type="email"
+                  placeholder="name@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  required
+                />
+              </div>
+            </div>
 
-          <p className="auth-switch">
-            Don't have an account? <Link to="/register">Create one</Link>
+            <div className="auth-field">
+              <label htmlFor="login-password">Password</label>
+              <div className="auth-input-wrapper">
+                <input
+                  id="login-password"
+                  type={showPass ? 'text' : 'password'}
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-toggle-pass"
+                  onClick={() => setShowPass(!showPass)}
+                  tabIndex={-1}
+                  aria-label={showPass ? 'Hide password' : 'Show password'}
+                >
+                  {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="auth-submit-btn"
+              disabled={loading}
+            >
+              {loading ? (
+                <span>Signing in...</span>
+              ) : (
+                <>
+                  <span>Sign In</span>
+                  <ArrowRight size={15} />
+                </>
+              )}
+            </button>
+          </form>
+
+          <p className="auth-footer-text">
+            Don't have an account?
+            <Link to="/register">Create an account</Link>
           </p>
-        </form>
+        </div>
       </div>
     </div>
   );

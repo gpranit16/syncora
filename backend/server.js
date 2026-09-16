@@ -19,6 +19,7 @@ const unreadRoutes = require("./routes/unreadRoutes");
 const fileRoutes = require("./routes/fileRoutes");
 const searchRoutes = require("./routes/searchRoutes");
 const meetingRoutes = require("./routes/meetingRoutes");
+const userRoutes = require("./routes/userRoutes");
 const authMiddleware = require("./middleware/authMiddleware");
 const chatSocket = require("./sockets/chatSocket");
 const aiRoutes = require("./routes/aiRoutes");
@@ -34,15 +35,22 @@ const corsOptions = {
   ...(corsOrigins === "*" ? {} : { credentials: true }),
 };
 
+const fs = require("fs");
+const uploadsDir = path.join(__dirname, "uploads");
+const avatarsDir = path.join(uploadsDir, "avatars");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
+
 // Express middlewares
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/uploads", express.static("uploads"));
+app.use("/uploads", express.static(uploadsDir));
 
 // API routes
 
 app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/workspaces", workspaceRoutes);
 app.use("/api/channels", channelRoutes);
 app.use("/api/messages", messageRoutes);

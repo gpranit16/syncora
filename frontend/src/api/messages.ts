@@ -7,6 +7,7 @@ export interface Message {
   sender_id: number;
   sender_name: string;
   sender_email: string;
+  sender_avatar?: string | null;
   message_text: string;
   is_edited?: boolean;
   is_deleted?: boolean;

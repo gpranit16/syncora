@@ -8,9 +8,11 @@ export interface Channel {
   created_at: string;
 }
 
-
 export const getChannels = (workspaceId: number) =>
   client.get<{ success: boolean; channels: Channel[] }>(`/channels/workspace/${workspaceId}`);
 
 export const createChannel = (data: { workspace_id: number; name: string; description?: string }) =>
   client.post('/channels/create', data);
+
+export const deleteChannel = (channelId: number) =>
+  client.delete<{ success: boolean; message: string }>(`/channels/${channelId}`);

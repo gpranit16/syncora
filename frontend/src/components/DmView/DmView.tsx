@@ -14,6 +14,7 @@ import AIAssistantPanel from '../AIAssistantPanel/AIAssistantPanel';
 import CreateTaskFromMessageModal, { type SourceMessage } from '../CreateTaskFromMessageModal/CreateTaskFromMessageModal';
 import { applyReactionDelta } from '../../utils/reactions';
 import { formatMessageTimestamp } from '../../utils/date';
+import { getAvatarUrl } from '../../utils/avatar';
 import './DmView.css';
 
 interface DmViewProps {
@@ -458,7 +459,13 @@ socket.off('message_pinned', onPinned);
                 onTargetChange?.({ user_id: u.user_id, name: u.name });
               }}
             >
-              <div className="avatar">{getInitials(u.name)}</div>
+              <div className="avatar">
+                {u.avatar_url ? (
+                  <img src={getAvatarUrl(u.avatar_url) || ''} alt={u.name} className="avatar-img" />
+                ) : (
+                  getInitials(u.name)
+                )}
+              </div>
               <div className="dm-user-info">
                 <span className="dm-user-name">{u.name}</span>
                 <span className="dm-user-email">{u.email}</span>
@@ -483,7 +490,13 @@ socket.off('message_pinned', onPinned);
                     onTargetChange?.({ user_id: u.user_id, name: u.name });
                   }}
                 >
-                  <div className="avatar">{getInitials(u.name)}</div>
+                  <div className="avatar">
+                    {u.avatar_url ? (
+                      <img src={getAvatarUrl(u.avatar_url) || ''} alt={u.name} className="avatar-img" />
+                    ) : (
+                      getInitials(u.name)
+                    )}
+                  </div>
                   <div className="dm-user-info">
                     <span className="dm-user-name">{u.name}</span>
                     <span className="dm-user-email">{u.email}</span>
@@ -518,7 +531,11 @@ socket.off('message_pinned', onPinned);
           <ArrowLeft size={18} />
         </button>
         <div className="avatar" style={{ position: 'relative' }}>
-          {getInitials(selectedUser.name)}
+          {selectedUser.avatar_url ? (
+            <img src={getAvatarUrl(selectedUser.avatar_url) || ''} alt={selectedUser.name} className="avatar-img" />
+          ) : (
+            getInitials(selectedUser.name)
+          )}
           {selectedUser.is_online && <div style={{ position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderRadius: '50%', backgroundColor: 'var(--success)', border: '2px solid var(--bg-elevated)' }} />}
         </div>
         <div className="dm-header-info">
@@ -658,7 +675,13 @@ socket.off('message_pinned', onPinned);
 
           return (
             <div id={`dm-${msg.direct_message_id}`} key={msg.direct_message_id} className={`message ${isOwn ? 'message-own' : ''} ${msg.is_deleted ? 'message-deleted' : ''}`}>
-              <div className="avatar avatar-sm">{getInitials(msg.sender_name)}</div>
+              <div className="avatar avatar-sm">
+                {msg.sender_avatar ? (
+                  <img src={getAvatarUrl(msg.sender_avatar) || ''} alt={msg.sender_name} className="avatar-img" />
+                ) : (
+                  getInitials(msg.sender_name)
+                )}
+              </div>
               <div className="message-content">
                 <div className="message-meta">
                   <span className="message-sender">{msg.sender_name}</span>

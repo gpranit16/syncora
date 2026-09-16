@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Pin } from 'lucide-react';
 import './PinnedMessagesPanel.css';
 
 interface PinnedMessageItem {
@@ -29,7 +29,9 @@ const PinnedMessagesPanel: React.FC<PinnedMessagesPanelProps> = ({
     <div className="pinned-overlay" onClick={onClose} />
     <div className="pinned-panel">
       <div className="pinned-header">
-        <h3>{'\u{1F4CC}'} {title}</h3>
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Pin size={16} /> {title}
+        </h3>
         <button className="btn-icon" onClick={onClose} title="Close">
           <X size={16} />
         </button>

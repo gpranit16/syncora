@@ -102,7 +102,54 @@ const getWorkspaceChannels = async (req, res) => {
   }
 };
 
+const deleteChannel = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const userId = req.user.user_id;
+
+    const [channel] = await db.promise().query(
+      "SELECT workspace_id, name FROM channels WHERE channel_id = ?",
+      [channelId]
+    );
+
+    if (channel.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found",
+      });
+    }
+
+    const workspaceId = channel[0].workspace_id;
+
+    const [member] = await db.promise().query(
+      "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+      [workspaceId, userId]
+    );
+
+    if (member.length === 0 || !['owner', 'admin'].includes(member[0].role)) {
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden. Only workspace owners and admins can delete channels",
+      });
+    }
+
+    await db.promise().query("DELETE FROM channels WHERE channel_id = ?", [channelId]);
+
+    return res.status(200).json({
+      success: true,
+      message: `Channel #${channel[0].name} deleted successfully`,
+    });
+  } catch (error) {
+    console.error("Delete channel error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while deleting channel",
+    });
+  }
+};
+
 module.exports = {
   createChannel,
   getWorkspaceChannels,
+  deleteChannel,
 };

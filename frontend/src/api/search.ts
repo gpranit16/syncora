@@ -7,6 +7,7 @@ export interface SearchUser {
   user_id: number;
   name: string;
   email: string;
+  avatar_url?: string | null;
   is_online?: boolean;
   last_seen?: string;
 }

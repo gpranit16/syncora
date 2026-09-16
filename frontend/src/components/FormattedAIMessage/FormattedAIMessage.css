@@ -6,19 +6,123 @@
   gap: 8px;
   line-height: 1.55;
   font-size: 13px;
-  color: #cdd6f4;
+  color: var(--text-secondary);
 }
 
 .ai-formatted-para {
   margin: 0;
   word-break: break-word;
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .ai-formatted-heading {
-  margin: 4px 0 2px 0;
+  margin: 6px 0 2px 0;
   font-size: 13px;
   font-weight: 700;
   color: #ffffff;
+}
+
+/* Structured JSON View */
+.ai-structured-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.ai-json-summary-card {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.ai-json-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #141418;
+  border: 1px solid #222226;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.ai-json-section.blockers {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: #191012;
+}
+
+.ai-json-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #a1a1aa;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.ai-json-icon {
+  color: #a78bfa;
+}
+
+.ai-json-summary-text {
+  font-size: 13px;
+  color: #e4e4e7;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.ai-json-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ai-json-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #d4d4d8;
+}
+
+.ai-json-bullet {
+  color: #8b5cf6;
+  font-weight: bold;
+}
+
+.ai-json-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-json-task-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #d4d4d8;
+  padding: 4px 0;
+}
+
+.ai-json-task-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-json-assignee {
+  font-size: 11px;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
 /* Lists & Task Rows */
@@ -34,20 +138,14 @@
   align-items: flex-start;
   gap: 8px;
   padding: 6px 10px;
-  background: rgba(24, 24, 37, 0.65);
-  border: 1px solid rgba(69, 71, 90, 0.45);
+  background: #141418;
+  border: 1px solid #222226;
   border-radius: 8px;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.ai-list-item:hover {
-  background: rgba(30, 30, 46, 0.85);
-  border-color: rgba(99, 102, 241, 0.4);
 }
 
 .ai-list-bullet {
   font-weight: 700;
-  color: #818cf8;
+  color: #a78bfa;
   flex-shrink: 0;
   margin-top: 1px;
 }
@@ -59,6 +157,7 @@
   align-items: center;
   gap: 4px 6px;
   word-break: break-word;
+  color: #d4d4d8;
 }
 
 /* Tokens */
@@ -67,28 +166,28 @@
   align-items: center;
   font-size: 11px;
   font-weight: 700;
-  color: #a5b4fc;
-  background: rgba(99, 102, 241, 0.2);
-  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
   padding: 1px 6px;
   border-radius: 4px;
-  letter-spacing: 0.2px;
 }
 
 .ai-token-code {
   display: inline-block;
-  font-family: inherit;
-  font-weight: 600;
-  color: #f8fafc;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #a78bfa;
+  background: #18181b;
+  border: 1px solid #27272a;
   padding: 1px 6px;
   border-radius: 4px;
 }
 
 .ai-token-bold {
   color: #ffffff;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* Status Badges */
@@ -101,7 +200,7 @@
   text-transform: uppercase;
   letter-spacing: 0.4px;
   padding: 2px 7px;
-  border-radius: 12px;
+  border-radius: 6px;
 }
 
 .ai-status-badge.status-pending {
@@ -130,7 +229,7 @@
   font-size: 10.5px;
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: 12px;
+  border-radius: 6px;
 }
 
 .ai-priority-badge.priority-high {
@@ -146,7 +245,7 @@
 }
 
 .ai-priority-badge.priority-low {
-  background: rgba(148, 163, 184, 0.15);
-  color: #cbd5e1;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: #27272a;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
 }

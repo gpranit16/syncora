@@ -13,9 +13,12 @@ const registerUser = async (req, res) => {
       });
     }
 
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanName = String(name).trim();
+
     const [existingUsers] = await db
       .promise()
-      .query("SELECT user_id FROM users WHERE email = ?", [email]);
+      .query("SELECT user_id FROM users WHERE LOWER(TRIM(email)) = ?", [cleanEmail]);
 
     if (existingUsers.length > 0) {
       return res.status(409).json({
@@ -29,8 +32,8 @@ const registerUser = async (req, res) => {
     const [result] = await db
       .promise()
       .query("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)", [
-        name,
-        email,
+        cleanName,
+        cleanEmail,
         hashedPassword,
       ]);
 
@@ -39,8 +42,8 @@ const registerUser = async (req, res) => {
       message: "User registered successfully",
       user: {
         user_id: result.insertId,
-        name,
-        email,
+        name: cleanName,
+        email: cleanEmail,
       },
     });
   } catch (error) {
@@ -64,9 +67,11 @@ const loginUser = async (req, res) => {
       });
     }
 
+    const cleanEmail = String(email).trim().toLowerCase();
+
     const [users] = await db
       .promise()
-      .query("SELECT * FROM users WHERE email = ?", [email]);
+      .query("SELECT * FROM users WHERE LOWER(TRIM(email)) = ?", [cleanEmail]);
 
     if (users.length === 0) {
       return res.status(401).json({
@@ -76,10 +81,30 @@ const loginUser = async (req, res) => {
     }
 
     const user = users[0];
-    const isPasswordCorrect = await bcrypt.compare(
-      password,
-      user.password_hash
-    );
+    const passwordHash = user.password_hash || user.password;
+
+    if (!passwordHash) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    let isPasswordCorrect = false;
+    try {
+      isPasswordCorrect = await bcrypt.compare(password, passwordHash);
+    } catch (bcryptErr) {
+      console.error("Bcrypt compare error:", bcryptErr);
+    }
+
+    // Fallback if password was stored in plaintext
+    if (!isPasswordCorrect && password === passwordHash) {
+      isPasswordCorrect = true;
+      const newHashed = await bcrypt.hash(password, 10);
+      try {
+        await db.promise().query("UPDATE users SET password_hash = ? WHERE user_id = ?", [newHashed, user.user_id]);
+      } catch (e) {}
+    }
 
     if (!isPasswordCorrect) {
       return res.status(401).json({
@@ -102,6 +127,7 @@ const loginUser = async (req, res) => {
         user_id: user.user_id,
         name: user.name,
         email: user.email,
+        avatar_url: user.avatar_url || null,
       },
     });
   } catch (error) {

@@ -6,9 +6,11 @@ export interface DirectMessage {
   sender_id: number;
   sender_name: string;
   sender_email: string;
+  sender_avatar?: string | null;
   receiver_id: number;
   receiver_name: string;
   receiver_email: string;
+  receiver_avatar?: string | null;
   message_text: string;
   reply_to?: number | null;
   file_url?: string | null;
@@ -60,7 +62,7 @@ export const sendDirectMessage = (data: SendDirectMessagePayload) =>
   client.post('/direct-messages/send', data);
 
 export const getRecentDmUsers = () =>
-  client.get<{ success: boolean; users: { user_id: number; name: string; email: string; is_online?: boolean; last_seen?: string }[] }>('/direct-messages/recent');
+  client.get<{ success: boolean; users: { user_id: number; name: string; email: string; avatar_url?: string | null; is_online?: boolean; last_seen?: string }[] }>('/direct-messages/recent');
 
 export const editDirectMessage = (messageId: number, messageText: string) =>
   client.put(`/direct-messages/${messageId}`, { message_text: messageText });

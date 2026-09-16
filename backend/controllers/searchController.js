@@ -15,7 +15,7 @@ const globalSearch = async (req, res) => {
     const connection = db.promise();
 
     const [users] = await connection.query(
-      `SELECT user_id, name, email, is_online, last_seen
+      `SELECT user_id, name, email, avatar_url, is_online, last_seen
        FROM users
        WHERE name LIKE ? OR email LIKE ?`,
       [keyword, keyword]

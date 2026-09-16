@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Hash, Send, Paperclip, Edit3, Trash2, Reply, X, Users, Pin, CheckSquare, Video, Mic, PhoneOff, Radio, Sparkles, FileText, Bot } from 'lucide-react';
+import { Hash, Send, Paperclip, Edit3, Trash2, Reply, X, Users, Pin, CheckSquare, Video, Mic, PhoneOff, Radio, Sparkles, FileText, Bot, Crown, Shield, ShieldCheck, ShieldAlert, UserMinus, Ban, Unlock, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
-import { getWorkspaceMembers } from '../../api/workspaces';
+import { getWorkspaceMembers, getBannedMembers, updateMemberRole, removeMember, banMember, unbanMember, type WorkspaceMember, type BannedMember } from '../../api/workspaces';
 import { getMessages, sendMessage as sendMsgApi, editMessage as editMsgApi, deleteMessage as deleteMsgApi, toggleMessageReaction, removeMessageReaction, toggleMessagePin, type Message } from '../../api/messages';
 import { uploadFile } from '../../api/files';
 import { API_BASE } from '../../api/client';
@@ -17,17 +17,19 @@ import CreateTaskFromMessageModal, { type SourceMessage } from '../CreateTaskFro
 import { StartMeetingModal } from '../Meetings/StartMeetingModal';
 import { MeetingAIModal } from '../Meetings/MeetingAIModal';
 import { getActiveMeetingByChannel, endMeeting, Meeting } from '../../api/meetings';
+import { deleteChannel, type Channel } from '../../api/channels';
 import { applyReactionDelta } from '../../utils/reactions';
 import { formatMessageTimestamp } from '../../utils/date';
-import type { Channel } from '../../api/channels';
+import { getAvatarUrl } from '../../utils/avatar';
 import './ChatView.css';
 
 interface ChatViewProps {
   channel: Channel;
   onDmSelect: (userId: number, userName: string) => void;
+  onChannelDeleted?: (channelId: number) => void;
 }
 
-const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
+const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDeleted }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { activeWorkspace } = useWorkspace();
@@ -50,12 +52,45 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
     meetingTitle?: string;
     initialTab: 'summary' | 'transcript';
   } | null>(null);
-  const [members, setMembers] = useState<any[]>([]);
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [bannedMembers, setBannedMembers] = useState<BannedMember[]>([]);
+  const [activeMemberTab, setActiveMemberTab] = useState<'members' | 'banned'>('members');
+  const [confirmModal, setConfirmModal] = useState<{
+    type: 'promote' | 'demote' | 'remove' | 'ban' | 'unban' | 'deleteChannel';
+    targetUser?: any;
+  } | null>(null);
+  const [banReason, setBanReason] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
+
   const typingUsers = useTypingIndicator(channel.channel_id);
   const scrollRef = useAutoScroll(messages);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [createTaskMsg, setCreateTaskMsg] = useState<SourceMessage | null>(null);
+
+  const fetchMembersAndBanned = useCallback(async () => {
+    if (!activeWorkspace) return;
+    try {
+      const res = await getWorkspaceMembers(activeWorkspace.workspace_id);
+      if (res.data.success) {
+        setMembers(res.data.members);
+      }
+      if (['owner', 'admin'].includes(activeWorkspace.role)) {
+        const banRes = await getBannedMembers(activeWorkspace.workspace_id);
+        if (banRes.data.success) {
+          setBannedMembers(banRes.data.banned_members);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load workspace members/banned:', err);
+    }
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    fetchMembersAndBanned();
+  }, [fetchMembersAndBanned]);
 
   // Fetch active meeting for current channel on channel change
   useEffect(() => {
@@ -403,6 +438,49 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
     }
   };
 
+  const handleConfirmAction = async () => {
+    if (!confirmModal || !activeWorkspace) return;
+    setActionLoading(true);
+    setActionError('');
+    setActionSuccess('');
+    try {
+      const { type, targetUser } = confirmModal;
+      if (type === 'promote') {
+        await updateMemberRole(activeWorkspace.workspace_id, targetUser.user_id, 'admin');
+        setActionSuccess(`Promoted ${targetUser.name} to Admin`);
+      } else if (type === 'demote') {
+        await updateMemberRole(activeWorkspace.workspace_id, targetUser.user_id, 'member');
+        setActionSuccess(`Demoted ${targetUser.name} to Member`);
+      } else if (type === 'remove') {
+        await removeMember(activeWorkspace.workspace_id, targetUser.user_id);
+        setActionSuccess(`Removed ${targetUser.name} from workspace`);
+      } else if (type === 'ban') {
+        await banMember(activeWorkspace.workspace_id, targetUser.user_id, banReason.trim() || 'Banned by admin/owner');
+        setActionSuccess(`Banned ${targetUser.name} from workspace`);
+      } else if (type === 'unban') {
+        await unbanMember(activeWorkspace.workspace_id, targetUser.user_id);
+        setActionSuccess(`Unbanned ${targetUser.name}`);
+      } else if (type === 'deleteChannel') {
+        await deleteChannel(channel.channel_id);
+        setConfirmModal(null);
+        if (onChannelDeleted) {
+          onChannelDeleted(channel.channel_id);
+        }
+        return;
+      }
+      await fetchMembersAndBanned();
+      setTimeout(() => {
+        setConfirmModal(null);
+        setActionLoading(false);
+        setBanReason('');
+        setActionSuccess('');
+      }, 700);
+    } catch (err: any) {
+      setActionError(err.response?.data?.message || 'Action failed');
+      setActionLoading(false);
+    }
+  };
+
   const getInitials = (name: string) => name?.split(' ').map(n => n[0]).join('').slice(0, 2) || '?';
   const filteredTyping = typingUsers.filter((t) => t.user_name !== user?.name);
 
@@ -463,9 +541,19 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
           <button className={`btn-icon ${showPinned ? 'active' : ''}`} onClick={() => setShowPinned(!showPinned)} title="Pinned messages">
             <Pin size={16} />
           </button>
-          <button className={`btn-icon ${showMembers ? 'active' : ''}`} onClick={() => setShowMembers(!showMembers)}>
+          <button className={`btn-icon ${showMembers ? 'active' : ''}`} onClick={() => setShowMembers(!showMembers)} title="Workspace Members & Roles">
             <Users size={18} />
           </button>
+          {['owner', 'admin'].includes(activeWorkspace?.role || '') && (
+            <button
+              className="btn-icon"
+              onClick={() => setConfirmModal({ type: 'deleteChannel' })}
+              title="Delete Channel"
+              style={{ color: 'var(--accent-danger)' }}
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -528,15 +616,11 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
           if (msg.message_type === 'meeting' || (msg as any).meeting_code || (msg as any).meeting_id) {
             const isVideo = (msg as any).meeting_type === 'video' || (msg as any).mode === 'video' || msg.message_text?.toLowerCase().includes('video');
             const durSecs = (msg as any).meeting_duration || 0;
-            const formatDur = (totalSecs: number) => {
-              const mins = Math.floor(totalSecs / 60);
-              const secs = totalSecs % 60;
-              if (mins > 0) return `${mins} min ${secs} sec`;
-              return `${secs} sec`;
-            };
-
-            const mCode = (msg as any).meeting_code || String((msg as any).meeting_id || '');
-            const mTitle = (msg as any).meeting_title || (isVideo ? 'Video Meeting' : 'Voice Meeting');
+            const durMins = Math.floor(durSecs / 60);
+            const durRemSecs = durSecs % 60;
+            const durStr = durSecs > 0 ? `${durMins}m ${durRemSecs > 0 ? durRemSecs + 's' : ''}`.trim() : null;
+            const meetingCode = (msg as any).meeting_code || 'syncora-meet';
+            const meetingTitle = msg.message_text || 'Channel Meeting';
 
             return (
               <div id={`msg-${msg.message_id}`} key={msg.message_id} className="channel-meeting-event-wrapper">
@@ -552,18 +636,18 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
                       <span className="channel-meeting-event-badge">Ended</span>
                     </div>
                     <div className="channel-meeting-event-subtext">
-                      <span>Host: <strong>{msg.sender_name || 'Host'}</strong></span>
-                      {durSecs > 0 && <span>• Duration: {formatDur(durSecs)}</span>}
-                      <span>• {formatMessageTimestamp(msg.created_at)}</span>
+                      <span className="meeting-host-pill">Host: <strong className="meeting-host-name">{msg.sender_name || 'Host'}</strong></span>
+                      {durStr && <span className="meeting-dur-pill">Duration: <strong>{durStr}</strong></span>}
+                      <span className="meeting-time-pill">{formatMessageTimestamp(msg.created_at)}</span>
                     </div>
-                    {mCode && (
+                    {meetingCode && (
                       <div className="channel-meeting-event-actions">
                         <button
                           className="meeting-event-ai-btn summary"
                           onClick={() => setSelectedMeetingAI({
                             isOpen: true,
-                            meetingCode: mCode,
-                            meetingTitle: mTitle,
+                            meetingCode: meetingCode,
+                            meetingTitle: meetingTitle,
                             initialTab: 'summary'
                           })}
                         >
@@ -574,8 +658,8 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
                           className="meeting-event-ai-btn transcript"
                           onClick={() => setSelectedMeetingAI({
                             isOpen: true,
-                            meetingCode: mCode,
-                            meetingTitle: mTitle,
+                            meetingCode: meetingCode,
+                            meetingTitle: meetingTitle,
                             initialTab: 'transcript'
                           })}
                         >
@@ -592,14 +676,20 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
 
           return (
             <div id={`msg-${msg.message_id}`} key={msg.message_id} className={`message ${isOwn ? 'message-own' : ''} ${msg.is_deleted ? 'message-deleted' : ''}`}>
-              <div className="avatar avatar-sm">{getInitials(msg.sender_name)}</div>
+              <div className="avatar avatar-sm">
+                {msg.sender_avatar ? (
+                  <img src={getAvatarUrl(msg.sender_avatar) || ''} alt={msg.sender_name} className="avatar-img" />
+                ) : (
+                  getInitials(msg.sender_name)
+                )}
+              </div>
               <div className="message-content">
                 <div className="message-meta">
                   <span className="message-sender">{msg.sender_name}</span>
                   <span className="message-time">
                     {formatMessageTimestamp(msg.created_at)}
                   </span>
-                  {msg.is_pinned && <span className="pinned-indicator" title="Pinned">{'\u{1F4CC}'}</span>}
+                  {msg.is_pinned && <span className="pinned-indicator" title="Pinned"><Pin size={12} /></span>}
                   {msg.is_edited && <span className="message-edited-tag">(edited)</span>}
                 </div>
 
@@ -799,34 +889,269 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect }) => {
         />
       )}
 
-      {/* Right Sidebar for Members */}
+      {/* Right Sidebar for Members & Role Management */}
       {showMembers && (
         <>
           <div className="members-overlay" onClick={() => setShowMembers(false)} />
           <div className="chat-members-panel">
             <div className="members-header">
-              <h3>Members</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Users size={18} color="var(--accent-primary)" />
+                <h3>Members & Roles ({members.length})</h3>
+              </div>
               <button className="btn-icon" onClick={() => setShowMembers(false)}><X size={16} /></button>
             </div>
-            <div className="members-list">
-              {members.map(member => (
-                <div key={member.user_id} className="member-row">
-                  <div className="avatar avatar-sm">{getInitials(member.name)}</div>
-                  <div className="member-meta">
-                    <div className="member-name">{member.name}</div>
-                    <div className="member-role">{member.role}</div>
+
+            {/* Tabs if owner or admin */}
+            {['owner', 'admin'].includes(activeWorkspace?.role || '') && (
+              <div className="members-tabs">
+                <button
+                  className={`members-tab-btn ${activeMemberTab === 'members' ? 'active' : ''}`}
+                  onClick={() => setActiveMemberTab('members')}
+                >
+                  <Users size={14} />
+                  <span>Members ({members.length})</span>
+                </button>
+                <button
+                  className={`members-tab-btn ${activeMemberTab === 'banned' ? 'active' : ''}`}
+                  onClick={() => setActiveMemberTab('banned')}
+                >
+                  <Ban size={14} />
+                  <span>Banned ({bannedMembers.length})</span>
+                </button>
+              </div>
+            )}
+
+            {activeMemberTab === 'members' ? (
+              <div className="members-list">
+                {members.map((member) => {
+                  const isSelf = member.user_id === user?.user_id;
+                  const currentUserRole = activeWorkspace?.role || 'member';
+
+                  return (
+                    <div key={member.user_id} className="member-row">
+                      <div className="avatar avatar-sm">
+                        {member.avatar_url ? (
+                          <img src={getAvatarUrl(member.avatar_url) || ''} alt={member.name} className="avatar-img" />
+                        ) : (
+                          getInitials(member.name)
+                        )}
+                      </div>
+                      <div className="member-meta">
+                        <div className="member-name-row">
+                          <span className="member-name">{member.name}</span>
+                          {isSelf && <span className="member-you-tag">You</span>}
+                        </div>
+                        <span className="member-email">{member.email}</span>
+                        <div style={{ marginTop: 2 }}>
+                          {member.role === 'owner' && (
+                            <span className="role-badge owner">
+                              <Crown size={11} /> Owner
+                            </span>
+                          )}
+                          {member.role === 'admin' && (
+                            <span className="role-badge admin">
+                              <Shield size={11} /> Admin
+                            </span>
+                          )}
+                          {member.role === 'member' && (
+                            <span className="role-badge member">
+                              Member
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="member-actions-group">
+                        {!isSelf && (
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => { onDmSelect(member.user_id, member.name); setShowMembers(false); }}
+                            title="Direct Message"
+                          >
+                            DM
+                          </button>
+                        )}
+
+                        {/* Owner actions: can promote/demote, remove, ban any admin/member */}
+                        {!isSelf && currentUserRole === 'owner' && (
+                          <>
+                            {member.role === 'admin' && (
+                              <button
+                                className="member-action-btn demote"
+                                onClick={() => setConfirmModal({ type: 'demote', targetUser: member })}
+                                title="Demote to Member"
+                              >
+                                <ShieldAlert size={14} />
+                              </button>
+                            )}
+                            {member.role === 'member' && (
+                              <button
+                                className="member-action-btn promote"
+                                onClick={() => setConfirmModal({ type: 'promote', targetUser: member })}
+                                title="Promote to Admin"
+                              >
+                                <ShieldCheck size={14} />
+                              </button>
+                            )}
+                            <button
+                              className="member-action-btn remove"
+                              onClick={() => setConfirmModal({ type: 'remove', targetUser: member })}
+                              title="Remove from Workspace"
+                            >
+                              <UserMinus size={14} />
+                            </button>
+                            <button
+                              className="member-action-btn ban"
+                              onClick={() => setConfirmModal({ type: 'ban', targetUser: member })}
+                              title="Ban from Workspace"
+                            >
+                              <Ban size={14} />
+                            </button>
+                          </>
+                        )}
+
+                        {/* Admin actions: can remove, ban regular members only (cannot touch owner or admins) */}
+                        {!isSelf && currentUserRole === 'admin' && member.role === 'member' && (
+                          <>
+                            <button
+                              className="member-action-btn remove"
+                              onClick={() => setConfirmModal({ type: 'remove', targetUser: member })}
+                              title="Remove from Workspace"
+                            >
+                              <UserMinus size={14} />
+                            </button>
+                            <button
+                              className="member-action-btn ban"
+                              onClick={() => setConfirmModal({ type: 'ban', targetUser: member })}
+                              title="Ban from Workspace"
+                            >
+                              <Ban size={14} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {members.length === 0 && <div className="members-empty">No members found.</div>}
+              </div>
+            ) : (
+              <div className="members-list">
+                {bannedMembers.map((banned) => (
+                  <div key={banned.ban_id} className="banned-row">
+                    <div className="banned-meta">
+                      <div className="banned-name">{banned.name}</div>
+                      <div className="member-email">{banned.email}</div>
+                      <div className="banned-reason">Reason: {banned.reason}</div>
+                      {banned.banned_by_name && (
+                        <div className="banned-by">Banned by: {banned.banned_by_name}</div>
+                      )}
+                    </div>
+                    <div className="banned-footer">
+                      <span className="timestamp" style={{ fontSize: 10 }}>
+                        {formatMessageTimestamp(banned.created_at)}
+                      </span>
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => setConfirmModal({ type: 'unban', targetUser: banned })}
+                      >
+                        <Unlock size={12} /> Unban
+                      </button>
+                    </div>
                   </div>
-                  {member.user_id !== user?.user_id && (
-                    <button className="btn btn-sm btn-primary" onClick={() => { onDmSelect(member.user_id, member.name); setShowMembers(false); }}>
-                      Message
-                    </button>
-                  )}
-                </div>
-              ))}
-              {members.length === 0 && <div className="members-empty">No members found.</div>}
-            </div>
+                ))}
+                {bannedMembers.length === 0 && (
+                  <div className="members-empty">No banned users in this workspace.</div>
+                )}
+              </div>
+            )}
           </div>
         </>
+      )}
+
+      {/* Confirmation Modal for Role Changes, Removal, Ban, Unban, Channel Deletion */}
+      {confirmModal && (
+        <div className="modal-overlay" onClick={() => !actionLoading && setConfirmModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <AlertTriangle size={20} color="var(--accent-warning)" />
+                <h3>
+                  {confirmModal.type === 'promote' && 'Promote to Admin'}
+                  {confirmModal.type === 'demote' && 'Demote to Member'}
+                  {confirmModal.type === 'remove' && 'Remove Member'}
+                  {confirmModal.type === 'ban' && 'Ban Member'}
+                  {confirmModal.type === 'unban' && 'Unban User'}
+                  {confirmModal.type === 'deleteChannel' && 'Delete Channel'}
+                </h3>
+              </div>
+              <button className="btn-icon" onClick={() => !actionLoading && setConfirmModal(null)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ fontSize: '0.875rem', color: 'var(--text-primary)', marginBottom: 16 }}>
+              {confirmModal.type === 'promote' && (
+                <p>Are you sure you want to promote <strong>{confirmModal.targetUser?.name}</strong> to <strong>Admin</strong>? They will be able to manage members and channels.</p>
+              )}
+              {confirmModal.type === 'demote' && (
+                <p>Are you sure you want to demote <strong>{confirmModal.targetUser?.name}</strong> to <strong>Member</strong>? They will lose administrative privileges.</p>
+              )}
+              {confirmModal.type === 'remove' && (
+                <p>Are you sure you want to remove <strong>{confirmModal.targetUser?.name}</strong> from this workspace? They will lose access to all channels and tasks.</p>
+              )}
+              {confirmModal.type === 'ban' && (
+                <div>
+                  <p>Are you sure you want to ban <strong>{confirmModal.targetUser?.name}</strong>? They will be removed immediately and blocked from rejoining.</p>
+                  <div className="form-group" style={{ marginTop: 12 }}>
+                    <label>Ban Reason (Optional)</label>
+                    <input
+                      className="input"
+                      placeholder="e.g. Violation of team rules"
+                      value={banReason}
+                      onChange={(e) => setBanReason(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+              {confirmModal.type === 'unban' && (
+                <p>Unban <strong>{confirmModal.targetUser?.name}</strong>? They will be allowed to rejoin or be invited back to the workspace.</p>
+              )}
+              {confirmModal.type === 'deleteChannel' && (
+                <p>Are you sure you want to delete <strong>#{channel.name}</strong>? All message history will be permanently deleted.</p>
+              )}
+            </div>
+
+            {actionError && (
+              <div style={{ color: 'var(--accent-danger)', fontSize: '0.8125rem', marginBottom: 12 }}>
+                {actionError}
+              </div>
+            )}
+            {actionSuccess && (
+              <div style={{ color: 'var(--accent-success)', fontSize: '0.8125rem', marginBottom: 12 }}>
+                {actionSuccess}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => setConfirmModal(null)}
+                disabled={actionLoading}
+              >
+                Cancel
+              </button>
+              <button
+                className={`btn btn-sm ${confirmModal.type === 'deleteChannel' || confirmModal.type === 'remove' || confirmModal.type === 'ban' ? 'btn-danger' : 'btn-primary'}`}
+                onClick={handleConfirmAction}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Processing...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* AI Assistant */}

@@ -15,6 +15,7 @@ export interface AuthUser {
   user_id: number;
   name: string;
   email: string;
+  avatar_url?: string | null;
 }
 
 export interface AuthResponse {

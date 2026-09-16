@@ -46,12 +46,19 @@ const sendDirectMessage = async (req, res) => {
       [senderId, receiver_id, message_text || "", reply_to, file_url, file_name, now]
     );
 
+    const [userRows] = await db.promise().query(
+      "SELECT name, avatar_url FROM users WHERE user_id = ?",
+      [senderId]
+    );
+
     return res.status(201).json({
       success: true,
       message: "Direct message sent successfully",
       data: {
         direct_message_id: result.insertId,
         sender_id: senderId,
+        sender_name: userRows[0]?.name || "",
+        sender_avatar: userRows[0]?.avatar_url || null,
         receiver_id,
         message_text,
         reply_to,
@@ -107,9 +114,11 @@ const getDirectMessages = async (req, res) => {
         dm.sender_id,
         sender.name AS sender_name,
         sender.email AS sender_email,
+        sender.avatar_url AS sender_avatar,
         dm.receiver_id,
         receiver.name AS receiver_name,
         receiver.email AS receiver_email,
+        receiver.avatar_url AS receiver_avatar,
         dm.message_text,
         dm.reply_to,
         dm.file_url,
@@ -157,7 +166,7 @@ const getRecentDmUsers = async (req, res) => {
   try {
     const userId = req.user.user_id;
     const [users] = await db.promise().query(
-      `SELECT DISTINCT u.user_id, u.name, u.email, u.is_online, u.last_seen
+      `SELECT DISTINCT u.user_id, u.name, u.email, u.avatar_url, u.is_online, u.last_seen
        FROM users u
        JOIN direct_messages dm ON u.user_id = dm.sender_id OR u.user_id = dm.receiver_id
        WHERE (dm.sender_id = ? OR dm.receiver_id = ?) AND u.user_id != ?`,

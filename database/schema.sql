@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS direct_message_reactions;
 DROP TABLE IF EXISTS direct_messages;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS channels;
+DROP TABLE IF EXISTS workspace_banned_users;
 DROP TABLE IF EXISTS workspace_members;
 DROP TABLE IF EXISTS workspaces;
 DROP TABLE IF EXISTS users;
@@ -19,6 +20,7 @@ CREATE TABLE users (
   name VARCHAR(100) NOT NULL,
   email VARCHAR(150) NOT NULL UNIQUE,
   password VARCHAR(255) NOT NULL,
+  avatar_url TEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -51,6 +53,32 @@ CREATE TABLE workspace_members (
 
   CONSTRAINT fk_workspace_members_user
     FOREIGN KEY (user_id)
+    REFERENCES users(user_id)
+    ON DELETE CASCADE
+);
+
+CREATE TABLE workspace_banned_users (
+  ban_id INT AUTO_INCREMENT PRIMARY KEY,
+  workspace_id INT NOT NULL,
+  user_id INT NOT NULL,
+  banned_by INT NOT NULL,
+  reason VARCHAR(255) DEFAULT 'Banned by admin/owner',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT uq_ws_banned_user UNIQUE (workspace_id, user_id),
+
+  CONSTRAINT fk_ws_banned_workspace
+    FOREIGN KEY (workspace_id)
+    REFERENCES workspaces(workspace_id)
+    ON DELETE CASCADE,
+
+  CONSTRAINT fk_ws_banned_user
+    FOREIGN KEY (user_id)
+    REFERENCES users(user_id)
+    ON DELETE CASCADE,
+
+  CONSTRAINT fk_ws_banned_by
+    FOREIGN KEY (banned_by)
     REFERENCES users(user_id)
     ON DELETE CASCADE
 );

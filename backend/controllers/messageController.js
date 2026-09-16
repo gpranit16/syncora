@@ -49,6 +49,11 @@ const sendMessage = async (req, res) => {
         [channel_id, userId, message_text || "", reply_to || null, file_url || null, file_name || null, now]
       );
 
+    const [userRows] = await db.promise().query(
+      "SELECT name, avatar_url FROM users WHERE user_id = ?",
+      [userId]
+    );
+
     return res.status(201).json({
       success: true,
       message: "Message sent successfully",
@@ -56,6 +61,8 @@ const sendMessage = async (req, res) => {
         message_id: result.insertId,
         channel_id,
         sender_id: userId,
+        sender_name: userRows[0]?.name || "",
+        sender_avatar: userRows[0]?.avatar_url || null,
         message_text,
         reply_to,
         file_url,
@@ -95,7 +102,7 @@ const getChannelMessages = async (req, res) => {
     }
 
     const [messages] = await db.promise().query(
-      `SELECT m.*, u.name as sender_name 
+      `SELECT m.*, u.name as sender_name, u.avatar_url as sender_avatar 
        FROM messages m 
        JOIN users u ON m.sender_id = u.user_id 
        WHERE m.channel_id = ? 
