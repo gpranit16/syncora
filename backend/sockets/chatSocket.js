@@ -228,6 +228,15 @@ const chatSocket = (io) => {
       io.to(roomName).emit("dm_deleted", messageData);
     });
 
+    socket.on("conversation_deleted", (data) => {
+      if (data && data.sender_id && data.receiver_id) {
+        const roomName = getDmRoomName(data.sender_id, data.receiver_id);
+        io.to(roomName).emit("conversation_deleted", data);
+        io.to(`user_${data.sender_id}`).emit("conversation_deleted", data);
+        io.to(`user_${data.receiver_id}`).emit("conversation_deleted", data);
+      }
+    });
+
     // Realtime notifications
     socket.on("join_notifications", (userId) => {
       const roomName = `notification_${userId}`;

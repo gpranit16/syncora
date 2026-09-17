@@ -118,6 +118,19 @@
   cursor: not-allowed;
 }
 
+.dm-delete-chat-btn {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+}
+
+.dm-delete-chat-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  transform: translateY(-1px);
+}
+
 .dm-call-text {
   font-size: 12px;
   font-weight: 500;
@@ -143,6 +156,48 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--space-2) 0;
+}
+
+.dm-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 0;
+  width: 100%;
+  box-sizing: border-box;
+  position: relative;
+  transition: background var(--transition-fast);
+}
+
+.dm-user-row:hover {
+  background: var(--bg-elevated);
+}
+
+.dm-user-row .dm-user-item {
+  flex: 1;
+  background: transparent;
+  padding-right: 8px;
+}
+
+.dm-user-row:hover .dm-user-delete-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.dm-user-delete-btn {
+  opacity: 0;
+  pointer-events: none;
+  transition: all var(--transition-fast);
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.dm-user-delete-btn:hover {
+  color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.15) !important;
 }
 
 .dm-user-item {
@@ -705,4 +760,30 @@
   .dm-call-time {
     font-size: 0.625rem;
   }
+
+  .dm-user-delete-btn {
+    opacity: 0.85;
+    pointer-events: auto;
+  }
+}
+
+/* ── Delete Confirmation Modal ───────────────────────────────────────────── */
+.dm-delete-modal {
+  max-width: 440px;
+  background: #141418;
+  border: 1px solid #27272a;
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+
+.dm-delete-icon-wrap {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }

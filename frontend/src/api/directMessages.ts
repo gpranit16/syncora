@@ -70,6 +70,9 @@ export const editDirectMessage = (messageId: number, messageText: string) =>
 export const deleteDirectMessage = (messageId: number) =>
   client.delete(`/direct-messages/${messageId}`);
 
+export const deleteConversation = (targetUserId: number) =>
+  client.delete<{ success: boolean; message: string }>(`/direct-messages/conversation/${targetUserId}`);
+
 export const toggleDmMessageReaction = (messageId: number, emoji: string) =>
   client.put<ReactionToggleResponse>(`/direct-messages/${messageId}/reactions`, { emoji });
 

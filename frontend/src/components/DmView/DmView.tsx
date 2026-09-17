@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MessageSquare, Send, ArrowLeft, Edit3, Trash2, Reply, X, Paperclip, Pin, CheckSquare, Phone, PhoneOff, PhoneMissed, Video, VideoOff, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCall } from '../../context/CallContext';
-import { getDirectMessages, sendDirectMessage, getRecentDmUsers, editDirectMessage, deleteDirectMessage, toggleDmMessageReaction, removeDmMessageReaction, toggleDmMessagePin, type DirectMessage } from '../../api/directMessages';
+import { getDirectMessages, sendDirectMessage, getRecentDmUsers, editDirectMessage, deleteDirectMessage, deleteConversation, toggleDmMessageReaction, removeDmMessageReaction, toggleDmMessagePin, type DirectMessage } from '../../api/directMessages';
 import { uploadFile } from '../../api/files';
 import { API_BASE } from '../../api/client';
 import { globalSearch, type SearchUser } from '../../api/search';
 import { getSocket } from '../../socket/socketManager';
-import { joinDm, emitSendDm, emitMarkDmRead, emitTyping, emitStopTyping, emitDmEdited, emitDmDeleted, emitReactionAdded, emitReactionRemoved, emitMessagePinned, emitMessageUnpinned } from '../../socket/socketManager';
+import { joinDm, emitSendDm, emitMarkDmRead, emitTyping, emitStopTyping, emitDmEdited, emitDmDeleted, emitConversationDeleted, emitReactionAdded, emitReactionRemoved, emitMessagePinned, emitMessageUnpinned } from '../../socket/socketManager';
 import { useAutoScroll } from '../../hooks/useSocket';
 import MessageReactions from '../MessageReactions/MessageReactions';
 import AIAssistantPanel from '../AIAssistantPanel/AIAssistantPanel';
@@ -60,6 +60,8 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useAutoScroll(messages);
   const [createTaskMsg, setCreateTaskMsg] = useState<SourceMessage | null>(null);
+  const [deleteTargetUser, setDeleteTargetUser] = useState<{ user_id: number; name: string } | null>(null);
+  const [isDeletingChat, setIsDeletingChat] = useState(false);
 
   useEffect(() => {
     if (!selectedUser) {
@@ -226,16 +228,33 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
       }
     };
 
+    const handleConversationDeleted = (data: { sender_id: number; receiver_id: number }) => {
+      if (!user) return;
+      const isRelated =
+        (data.sender_id === user.user_id && data.receiver_id === selectedUser?.user_id) ||
+        (data.receiver_id === user.user_id && data.sender_id === selectedUser?.user_id);
+
+      if (isRelated) {
+        setMessages([]);
+        setSelectedUser(null);
+        onTargetChange?.(null);
+      }
+
+      const otherId = data.sender_id === user.user_id ? data.receiver_id : data.sender_id;
+      setRecentUsers((prev) => prev.filter((u) => u.user_id !== otherId));
+    };
+
     socket.on('receive_dm', handler);
     socket.on('user_typing', handleUserTyping);
     socket.on('stop_typing', handleUserStopTyping);
     socket.on('dm_edited', handleDmEdited);
     socket.on('dm_deleted', handleDmDeleted);
+    socket.on('conversation_deleted', handleConversationDeleted);
     socket.on('online_users', handleOnlineUsers);
     socket.on('connect', onConnect);
     socket.on('reaction_added', onReactionAdded);
     socket.on('reaction_removed', onReactionRemoved);
-socket.on('message_pinned', onPinned);
+    socket.on('message_pinned', onPinned);
     socket.on('message_unpinned', onUnpinned);
     
     return () => { 
@@ -244,16 +263,38 @@ socket.on('message_pinned', onPinned);
       socket.off('stop_typing', handleUserStopTyping);
       socket.off('dm_edited', handleDmEdited);
       socket.off('dm_deleted', handleDmDeleted);
+      socket.off('conversation_deleted', handleConversationDeleted);
       socket.off('online_users', handleOnlineUsers);
       socket.off('connect', onConnect);
       socket.off('reaction_added', onReactionAdded);
-socket.off('message_pinned', onPinned);
-      socket.on('message_unpinned', onUnpinned);
-    socket.on('reaction_removed', onReactionRemoved);
-    socket.off('message_pinned', onPinned);
-    socket.off('message_unpinned', onUnpinned);
+      socket.off('reaction_removed', onReactionRemoved);
+      socket.off('message_pinned', onPinned);
+      socket.off('message_unpinned', onUnpinned);
     };
-  }, [selectedUser, user]);
+  }, [selectedUser, user, onTargetChange]);
+
+  const confirmDeleteChat = async () => {
+    if (!deleteTargetUser || !user) return;
+    try {
+      setIsDeletingChat(true);
+      await deleteConversation(deleteTargetUser.user_id);
+      emitConversationDeleted({
+        sender_id: user.user_id,
+        receiver_id: deleteTargetUser.user_id,
+      });
+      setRecentUsers((prev) => prev.filter((u) => u.user_id !== deleteTargetUser.user_id));
+      if (selectedUser?.user_id === deleteTargetUser.user_id) {
+        setMessages([]);
+        setSelectedUser(null);
+        onTargetChange?.(null);
+      }
+      setDeleteTargetUser(null);
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    } finally {
+      setIsDeletingChat(false);
+    }
+  };
 
   const handleEdit = async (msgId: number) => {
     if (!editText.trim() || !user || !selectedUser) return;
@@ -482,26 +523,40 @@ socket.off('message_pinned', onPinned);
             <>
               <h4 style={{ margin: '16px 20px 8px', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Recent Conversations</h4>
               {recentUsers.map((u) => (
-                <button
-                  key={u.user_id}
-                  className="dm-user-item"
-                  onClick={() => {
-                    setSelectedUser(u);
-                    onTargetChange?.({ user_id: u.user_id, name: u.name });
-                  }}
-                >
-                  <div className="avatar">
-                    {u.avatar_url ? (
-                      <img src={getAvatarUrl(u.avatar_url) || ''} alt={u.name} className="avatar-img" />
-                    ) : (
-                      getInitials(u.name)
-                    )}
-                  </div>
-                  <div className="dm-user-info">
-                    <span className="dm-user-name">{u.name}</span>
-                    <span className="dm-user-email">{u.email}</span>
-                  </div>
-                </button>
+                <div key={u.user_id} className="dm-user-row">
+                  <button
+                    className="dm-user-item"
+                    onClick={() => {
+                      setSelectedUser(u);
+                      onTargetChange?.({ user_id: u.user_id, name: u.name });
+                    }}
+                  >
+                    <div className="avatar" style={{ position: 'relative' }}>
+                      {u.avatar_url ? (
+                        <img src={getAvatarUrl(u.avatar_url) || ''} alt={u.name} className="avatar-img" />
+                      ) : (
+                        getInitials(u.name)
+                      )}
+                      {u.is_online && <div className="dm-online-badge" />}
+                    </div>
+                    <div className="dm-user-info">
+                      <span className="dm-user-name">{u.name}</span>
+                      <span className="dm-user-email">
+                        {u.is_online ? 'Online' : (u.last_seen ? `Last seen ${formatMessageTimestamp(u.last_seen)}` : (u.email || 'Offline'))}
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    className="btn-icon dm-user-delete-btn"
+                    title={`Delete chat with ${u.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTargetUser({ user_id: u.user_id, name: u.name });
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               ))}
             </>
           )}
@@ -514,6 +569,48 @@ socket.off('message_pinned', onPinned);
             </div>
           )}
         </div>
+
+        {/* Delete Confirmation Modal */}
+        {deleteTargetUser && (
+          <div className="modal-overlay" onClick={() => !isDeletingChat && setDeleteTargetUser(null)}>
+            <div className="modal dm-delete-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div className="dm-delete-icon-wrap">
+                    <Trash2 size={20} color="#f87171" />
+                  </div>
+                  <h3 style={{ margin: 0 }}>Delete Conversation</h3>
+                </div>
+                <button
+                  className="btn-icon"
+                  onClick={() => !isDeletingChat && setDeleteTargetUser(null)}
+                  disabled={isDeletingChat}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: 20, lineHeight: 1.6 }}>
+                Are you sure you want to delete the chat with <strong>{deleteTargetUser.name}</strong>? All direct messages and call history with this user will be permanently removed.
+              </p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  className="btn btn-md btn-ghost"
+                  onClick={() => setDeleteTargetUser(null)}
+                  disabled={isDeletingChat}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-md btn-danger"
+                  onClick={confirmDeleteChat}
+                  disabled={isDeletingChat}
+                >
+                  {isDeletingChat ? 'Deleting...' : 'Delete Chat'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -563,6 +660,14 @@ socket.off('message_pinned', onPinned);
           >
             <Video size={15} />
             <span className="dm-call-text">Video Call</span>
+          </button>
+          <button
+            className="dm-call-btn dm-delete-chat-btn"
+            title="Delete entire conversation"
+            onClick={() => setDeleteTargetUser({ user_id: selectedUser.user_id, name: selectedUser.name })}
+          >
+            <Trash2 size={15} />
+            <span className="dm-call-text">Delete Chat</span>
           </button>
         </div>
       </div>
@@ -906,6 +1011,48 @@ socket.off('message_pinned', onPinned);
           onClose={() => setCreateTaskMsg(null)}
           onCreated={() => setCreateTaskMsg(null)}
         />
+      )}
+
+      {/* Delete Conversation Confirmation Modal */}
+      {deleteTargetUser && (
+        <div className="modal-overlay" onClick={() => !isDeletingChat && setDeleteTargetUser(null)}>
+          <div className="modal dm-delete-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div className="dm-delete-icon-wrap">
+                  <Trash2 size={20} color="#f87171" />
+                </div>
+                <h3 style={{ margin: 0 }}>Delete Conversation</h3>
+              </div>
+              <button
+                className="btn-icon"
+                onClick={() => !isDeletingChat && setDeleteTargetUser(null)}
+                disabled={isDeletingChat}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: 20, lineHeight: 1.6 }}>
+              Are you sure you want to delete the chat with <strong>{deleteTargetUser.name}</strong>? All direct messages and call history with this user will be permanently removed.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                className="btn btn-md btn-ghost"
+                onClick={() => setDeleteTargetUser(null)}
+                disabled={isDeletingChat}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-md btn-danger"
+                onClick={confirmDeleteChat}
+                disabled={isDeletingChat}
+              >
+                {isDeletingChat ? 'Deleting...' : 'Delete Chat'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -166,10 +166,12 @@ const getRecentDmUsers = async (req, res) => {
   try {
     const userId = req.user.user_id;
     const [users] = await db.promise().query(
-      `SELECT DISTINCT u.user_id, u.name, u.email, u.avatar_url, u.is_online, u.last_seen
+      `SELECT u.user_id, u.name, u.email, u.avatar_url, u.is_online, u.last_seen, MAX(dm.created_at) AS last_activity
        FROM users u
        JOIN direct_messages dm ON u.user_id = dm.sender_id OR u.user_id = dm.receiver_id
-       WHERE (dm.sender_id = ? OR dm.receiver_id = ?) AND u.user_id != ?`,
+       WHERE (dm.sender_id = ? OR dm.receiver_id = ?) AND u.user_id != ?
+       GROUP BY u.user_id, u.name, u.email, u.avatar_url, u.is_online, u.last_seen
+       ORDER BY last_activity DESC`,
       [userId, userId, userId]
     );
     return res.status(200).json({ success: true, users });
@@ -222,10 +224,40 @@ const deleteDirectMessage = async (req, res) => {
   }
 };
 
+const deleteConversation = async (req, res) => {
+  try {
+    const { targetUserId } = req.params;
+    const userId = req.user.user_id;
+
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, message: "Target user ID is required" });
+    }
+
+    await db.promise().query(
+      `DELETE FROM direct_messages 
+       WHERE (sender_id = ? AND receiver_id = ?) 
+          OR (sender_id = ? AND receiver_id = ?)`,
+      [userId, targetUserId, targetUserId, userId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Conversation deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete conversation error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while deleting conversation",
+    });
+  }
+};
+
 module.exports = {
   sendDirectMessage,
   getDirectMessages,
   getRecentDmUsers,
   editDirectMessage,
   deleteDirectMessage,
+  deleteConversation,
 };

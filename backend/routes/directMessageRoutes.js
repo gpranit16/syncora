@@ -6,6 +6,7 @@ const {
   getRecentDmUsers,
   editDirectMessage,
   deleteDirectMessage,
+  deleteConversation,
 } = require("../controllers/directMessageController");
 const { dmReactions } = require("../controllers/reactionController");
 const { dmPins } = require("../controllers/pinController");
@@ -15,6 +16,7 @@ const router = express.Router();
 router.post("/send", authMiddleware, sendDirectMessage);
 router.get("/recent", authMiddleware, getRecentDmUsers);
 router.get("/chat/:receiverId", authMiddleware, getDirectMessages);
+router.delete("/conversation/:targetUserId", authMiddleware, deleteConversation);
 router.put("/:messageId", authMiddleware, editDirectMessage);
 router.put("/:messageId/reactions", authMiddleware, dmReactions.toggleReaction);
 router.delete("/:messageId/reactions", authMiddleware, dmReactions.removeReaction);

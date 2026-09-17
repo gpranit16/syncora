@@ -101,6 +101,13 @@ export const emitDmDeleted = (data: {
   getSocket().emit('dm_deleted', data);
 };
 
+export const emitConversationDeleted = (data: {
+  sender_id: number;
+  receiver_id: number;
+}) => {
+  getSocket().emit('conversation_deleted', data);
+};
+
 export const emitMessageEdited = (data: {
   message_id: number;
   channel_id: number;
