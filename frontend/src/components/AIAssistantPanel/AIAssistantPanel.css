@@ -312,11 +312,32 @@
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 768px) {
+  .ai-assistant-fab {
+    bottom: 68px !important;
+    right: 12px !important;
+    height: 36px;
+    padding: 0 10px 0 6px;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .ai-fab-icon-wrap {
+    width: 24px;
+    height: 24px;
+  }
+
+  .ai-fab-label {
+    font-size: 11.5px;
+  }
+
   .ai-assistant-panel {
-    width: calc(100vw - 32px);
-    right: 16px;
-    left: 16px;
-    bottom: 70px;
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px) !important;
+    left: 10px !important;
+    right: 10px !important;
+    bottom: 62px !important;
+    height: min(480px, calc(100dvh - 80px)) !important;
+    border-radius: 12px;
   }
 }

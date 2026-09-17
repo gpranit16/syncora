@@ -1,45 +1,142 @@
+/* ==========================================================================
+   DmView.css - Responsive Obsidian Dark Theme for Direct Messages
+   ========================================================================== */
+
 .dm-view {
   flex: 1;
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: 100%;
+  min-width: 0;
   background: var(--bg-abyss);
+  overflow: hidden;
+  position: relative;
 }
 
+/* ── Header ─────────────────────────────────────────────────────────────── */
 .dm-header {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
+  padding: 10px 18px;
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-panel);
   flex-shrink: 0;
+  min-height: 56px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.dm-header h3 {
-  font-size: 1rem;
-  font-weight: 600;
+.dm-back-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+}
+
+.dm-header-avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  position: relative;
+}
+
+.dm-online-badge {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--accent-success);
+  border: 2px solid var(--bg-panel);
 }
 
 .dm-header-info {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.dm-header-info h3 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
 }
 
 .dm-header-email {
   font-size: 0.6875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-muted);
 }
 
+.dm-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.dm-call-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  color: #818cf8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.dm-call-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.24);
+  border-color: rgba(99, 102, 241, 0.5);
+  color: #a5b4fc;
+  transform: translateY(-1px);
+}
+
+.dm-call-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dm-call-text {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ── Search & User Picker List ──────────────────────────────────────────── */
 .dm-search {
   display: flex;
   gap: var(--space-2);
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .dm-search .input {
   flex: 1;
+  min-width: 0;
 }
 
 .dm-user-list {
@@ -60,6 +157,7 @@
   transition: background var(--transition-fast);
   text-align: left;
   color: var(--text-primary);
+  box-sizing: border-box;
 }
 
 .dm-user-item:hover {
@@ -69,43 +167,289 @@
 .dm-user-info {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
 }
 
 .dm-user-name {
   font-weight: 600;
   font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dm-user-email {
   font-size: 0.6875rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-@media (max-width: 768px) {
-  .dm-header,
-  .dm-search {
-    padding: var(--space-4);
-  }
+/* ── Messages List ──────────────────────────────────────────────────────── */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
 
-  .dm-user-item {
-    padding: var(--space-3) var(--space-4);
-  }
+.message {
+  display: flex;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+  position: relative;
+  max-width: 100%;
+}
 
-  .dm-user-name {
-    font-size: 0.8125rem;
-  }
+.message:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
 
-  .dm-user-email {
-    font-size: 0.625rem;
-  }
+.message:hover .message-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.message-own .message-content {
+  background: rgba(124, 92, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+}
+
+.message-deleted .message-text {
+  color: var(--text-disabled);
+  font-style: italic;
+}
+
+.message-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 2px;
+  flex-wrap: wrap;
+}
+
+.message-sender {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+}
+
+.message-time {
+  font-size: 0.6875rem;
+  color: var(--text-disabled);
+}
+
+.message-edited-tag {
+  font-size: 0.625rem;
+  color: var(--text-disabled);
+  font-style: italic;
+}
+
+.message-text {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.message-reply-ref {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.6875rem;
+  color: var(--accent-secondary);
+  margin-bottom: 4px;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--accent-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.message-actions {
+  position: absolute;
+  top: 4px;
+  right: var(--space-2);
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.message-actions .btn-icon {
+  width: 28px;
+  height: 28px;
+}
+
+/* ── Typing Indicator ────────────────────────────────────────────────────── */
+.dm-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 18px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.typing-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+.typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typingBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Reply Banner & File Preview ─────────────────────────────────────────── */
+.dm-reply-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.8125rem;
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dm-reply-banner .reply-banner-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+}
+
+.dm-file-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.file-preview-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.file-preview-info span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Message Composer (Flexbox Input Row) ────────────────────────────────── */
+.dm-composer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 5;
+}
+
+.dm-attach-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+}
+
+.dm-input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 14px;
+  background: var(--bg-abyss);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.dm-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+}
+
+.dm-input::placeholder {
+  color: var(--text-disabled);
+}
+
+.dm-send-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
 }
 
 /* ── DM Call Event Cards (WhatsApp-style) ─────────────────────────────────── */
 .dm-call-event-wrapper {
   display: flex;
   width: 100%;
-  margin: 10px 0;
+  margin: 8px 0;
   padding: 0 16px;
+  box-sizing: border-box;
 }
 
 .dm-call-event-wrapper.call-event-own {
@@ -121,10 +465,12 @@
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #0d0d10;
   border: 1px solid #222226;
-  max-width: 320px;
+  width: fit-content;
+  max-width: min(340px, 100%);
+  box-sizing: border-box;
   transition: transform 0.15s ease, border-color 0.15s ease;
 }
 
@@ -159,8 +505,8 @@
 }
 
 .dm-call-icon-wrap {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -173,12 +519,16 @@
   flex-direction: column;
   gap: 2px;
   flex: 1;
+  min-width: 0;
 }
 
 .dm-call-title {
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dm-call-subtext {
@@ -190,8 +540,10 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: center;
   gap: 4px;
   margin-left: 8px;
+  flex-shrink: 0;
 }
 
 .dm-call-time {
@@ -225,3 +577,132 @@
   cursor: not-allowed;
 }
 
+/* ── Mobile Responsive Layout (< 768px) ─────────────────────────────────── */
+@media (max-width: 768px) {
+  .dm-header {
+    padding: 8px 12px;
+    gap: 8px;
+    min-height: 52px;
+  }
+
+  .dm-back-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  .dm-header-avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .dm-header-info h3 {
+    font-size: 0.875rem;
+  }
+
+  .dm-header-email {
+    font-size: 0.625rem;
+  }
+
+  .dm-header-actions {
+    gap: 6px;
+  }
+
+  /* On mobile: Compact icon-only call buttons */
+  .dm-call-btn {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    gap: 0;
+    border-radius: 8px;
+  }
+
+  .dm-call-text {
+    display: none;
+  }
+
+  .dm-search {
+    padding: 10px 12px;
+  }
+
+  .dm-user-item {
+    padding: 8px 12px;
+    gap: 10px;
+  }
+
+  .dm-user-name {
+    font-size: 0.8125rem;
+  }
+
+  .dm-user-email {
+    font-size: 0.625rem;
+  }
+
+  .chat-messages {
+    padding: 10px 12px;
+    gap: 4px;
+  }
+
+  .message {
+    gap: 8px;
+    padding: 6px 8px;
+  }
+
+  .message-text {
+    font-size: 0.8125rem;
+  }
+
+  .dm-reply-banner,
+  .dm-file-preview {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+  }
+
+  .dm-composer {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .dm-attach-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .dm-input {
+    height: 38px;
+    font-size: 0.8125rem;
+    padding: 0 10px;
+  }
+
+  .dm-send-btn {
+    width: 38px;
+    height: 38px;
+  }
+
+  .dm-call-event-wrapper {
+    padding: 0 4px;
+    margin: 6px 0;
+  }
+
+  .dm-call-card {
+    padding: 8px 10px;
+    gap: 8px;
+    max-width: 100%;
+  }
+
+  .dm-call-icon-wrap {
+    width: 32px;
+    height: 32px;
+  }
+
+  .dm-call-title {
+    font-size: 0.8125rem;
+  }
+
+  .dm-call-subtext {
+    font-size: 0.6875rem;
+  }
+
+  .dm-call-time {
+    font-size: 0.625rem;
+  }
+}

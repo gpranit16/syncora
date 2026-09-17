@@ -522,25 +522,26 @@ socket.off('message_pinned', onPinned);
     <div className="dm-view">
       <div className="dm-header">
         <button
-          className="btn-icon"
+          className="btn-icon dm-back-btn"
           onClick={() => {
             setSelectedUser(null);
             onTargetChange?.(null);
           }}
+          title="Back to conversations"
         >
           <ArrowLeft size={18} />
         </button>
-        <div className="avatar" style={{ position: 'relative' }}>
+        <div className="avatar dm-header-avatar">
           {selectedUser.avatar_url ? (
             <img src={getAvatarUrl(selectedUser.avatar_url) || ''} alt={selectedUser.name} className="avatar-img" />
           ) : (
             getInitials(selectedUser.name)
           )}
-          {selectedUser.is_online && <div style={{ position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderRadius: '50%', backgroundColor: 'var(--success)', border: '2px solid var(--bg-elevated)' }} />}
+          {selectedUser.is_online && <div className="dm-online-badge" />}
         </div>
         <div className="dm-header-info">
-          <h3>{selectedUser.name}</h3>
-          <span className="dm-header-email" style={{ color: selectedUser.is_online ? 'var(--success)' : 'var(--text-muted)' }}>
+          <h3 title={selectedUser.name}>{selectedUser.name}</h3>
+          <span className="dm-header-email" style={{ color: selectedUser.is_online ? 'var(--accent-success)' : 'var(--text-muted)' }}>
             {selectedUser.is_online ? 'Online' : (selectedUser.last_seen ? `Last seen ${formatMessageTimestamp(selectedUser.last_seen)}` : 'Offline')}
           </span>
         </div>
@@ -551,8 +552,8 @@ socket.off('message_pinned', onPinned);
             disabled={callState !== 'idle'}
             onClick={() => startCall({ user_id: selectedUser.user_id, name: selectedUser.name }, 'voice')}
           >
-            <Phone size={14} />
-            <span>Voice Call</span>
+            <Phone size={15} />
+            <span className="dm-call-text">Voice Call</span>
           </button>
           <button
             className="dm-call-btn"
@@ -560,8 +561,8 @@ socket.off('message_pinned', onPinned);
             disabled={callState !== 'idle'}
             onClick={() => startCall({ user_id: selectedUser.user_id, name: selectedUser.name }, 'video')}
           >
-            <Video size={14} />
-            <span>Video Call</span>
+            <Video size={15} />
+            <span className="dm-call-text">Video Call</span>
           </button>
         </div>
       </div>
@@ -813,36 +814,51 @@ socket.off('message_pinned', onPinned);
         <div ref={scrollRef} />
       </div>
 
+      {/* Typing Indicator */}
       {typingUsers.size > 0 && (
-        <div className="typing-indicator" style={{ position: 'absolute', bottom: replyTo ? '120px' : '80px', left: '24px' }}>
+        <div className="typing-indicator dm-typing-indicator">
           <div className="typing-dots">
             <span></span><span></span><span></span>
           </div>
-          {Array.from(typingUsers).join(', ')} {typingUsers.size === 1 ? 'is' : 'are'} typing...
+          <span>{Array.from(typingUsers).join(', ')} {typingUsers.size === 1 ? 'is' : 'are'} typing...</span>
         </div>
       )}
 
+      {/* Reply Banner */}
       {replyTo && (
-        <div className="reply-banner" style={{ background: 'var(--bg-elevated)', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', borderTop: '1px solid var(--border-subtle)', fontSize: '0.8125rem' }}>
+        <div className="reply-banner dm-reply-banner">
           <Reply size={14} color="var(--accent-secondary)" />
-          <span style={{ flex: 1, color: 'var(--text-muted)' }}>Replying to <strong style={{ color: 'var(--text-primary)' }}>{replyTo.sender_name}</strong>: {replyTo.message_text.slice(0, 60)}...</span>
-          <button className="btn-icon" onClick={() => setReplyTo(null)} style={{ height: 24, width: 24 }}><X size={14} /></button>
-        </div>
-      )}
-
-      {selectedFile && (
-        <div className="file-preview" style={{ padding: '8px 16px', backgroundColor: 'var(--bg-elevated)', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
-            <Paperclip size={14} />
-            <span>{selectedFile.name}</span>
-          </div>
-          <button className="btn-icon" onClick={() => setSelectedFile(null)}>
+          <span className="reply-banner-text">
+            Replying to <strong style={{ color: 'var(--text-primary)' }}>{replyTo.sender_name}</strong>: {replyTo.message_text.slice(0, 60)}...
+          </span>
+          <button className="btn-icon" onClick={() => setReplyTo(null)} title="Cancel reply">
             <X size={14} />
           </button>
         </div>
       )}
 
-      <div className="chat-input" style={{ borderTop: (replyTo || selectedFile) ? 'none' : '1px solid var(--border-subtle)' }}>
+      {/* File Preview */}
+      {selectedFile && (
+        <div className="file-preview dm-file-preview">
+          <div className="file-preview-info">
+            <Paperclip size={14} />
+            <span>{selectedFile.name}</span>
+          </div>
+          <button className="btn-icon" onClick={() => setSelectedFile(null)} title="Remove file">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Composer */}
+      <form
+        className="chat-composer dm-composer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSend();
+        }}
+        style={{ borderTop: (replyTo || selectedFile) ? 'none' : '1px solid var(--border-subtle)' }}
+      >
         <input 
           type="file" 
           style={{ display: 'none' }} 
@@ -853,22 +869,32 @@ socket.off('message_pinned', onPinned);
             }
           }}
         />
-        <button className="btn-icon" style={{ marginRight: '8px' }} onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
+        <button
+          type="button"
+          className="btn-icon dm-attach-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isUploading}
+          title="Attach file"
+        >
           <Paperclip size={18} />
         </button>
         <input
-          className="input"
+          className="composer-input dm-input"
           placeholder={`Message ${selectedUser.name}...`}
           value={input}
           onChange={handleTyping}
           onBlur={handleBlur}
-          onKeyDown={(e) => e.key === 'Enter' && handleSend()}
           disabled={isUploading}
         />
-        <button className="btn btn-md btn-primary send-btn" onClick={handleSend} disabled={(!input.trim() && !selectedFile) || isUploading}>
+        <button
+          type="submit"
+          className="btn btn-md btn-primary send-btn dm-send-btn"
+          disabled={(!input.trim() && !selectedFile) || isUploading}
+          title="Send message"
+        >
           <Send size={16} />
         </button>
-      </div>
+      </form>
 
       {/* AI Assistant */}
       <AIAssistantPanel contextType="dm" contextId={selectedUser.user_id} />
