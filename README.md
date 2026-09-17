@@ -389,5 +389,5 @@ Distributed under the **MIT License**. See `LICENSE` for more information.
 ---
 
 <div align="center">
-  <sub>Built with ❤️ by the Syncora Engineering Team</sub>
+  <sub>Built with ❤️ by <strong>Pranit Kumar</strong></sub>
 </div>
