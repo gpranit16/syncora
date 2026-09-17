@@ -293,13 +293,19 @@ export const MeetingAIModal: React.FC<MeetingAIModalProps> = ({
       <div className="meeting-ai-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="meeting-ai-header">
-          <div className="meeting-ai-header-info">
-            <div className="meeting-ai-badge">
-              <Sparkles size={14} className="sparkle-icon" />
-              <span>Meeting Intelligence</span>
+          <div className="meeting-ai-header-main">
+            <div className="meeting-ai-header-info">
+              <div className="meeting-ai-badge">
+                <Sparkles size={14} className="sparkle-icon" />
+                <span>Meeting Intelligence</span>
+              </div>
+              <h2 className="meeting-ai-title">{meetingTitle}</h2>
+              <span className="meeting-ai-code">Room: {meetingCode}</span>
             </div>
-            <h2 className="meeting-ai-title">{meetingTitle}</h2>
-            <span className="meeting-ai-code">Room: {meetingCode}</span>
+
+            <button className="meeting-ai-close-btn mobile-close" onClick={onClose} aria-label="Close modal">
+              <X size={20} />
+            </button>
           </div>
 
           <div className="meeting-ai-header-tabs">
@@ -319,7 +325,7 @@ export const MeetingAIModal: React.FC<MeetingAIModalProps> = ({
             </button>
           </div>
 
-          <button className="meeting-ai-close-btn" onClick={onClose}>
+          <button className="meeting-ai-close-btn desktop-close" onClick={onClose} aria-label="Close modal">
             <X size={20} />
           </button>
         </div>

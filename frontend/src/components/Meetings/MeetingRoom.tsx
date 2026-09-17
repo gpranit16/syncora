@@ -110,7 +110,6 @@ const ParticipantTile: React.FC<{
               <span>{participant.userName ? participant.userName[0].toUpperCase() : 'U'}</span>
             )}
           </div>
-          <span className="participant-avatar-name">{participant.userName}</span>
         </div>
       )}
 
@@ -253,7 +252,6 @@ const LocalTile: React.FC<{
               <span>{userName ? userName[0].toUpperCase() : 'Y'}</span>
             )}
           </div>
-          <span className="participant-avatar-name">{userName} (You)</span>
         </div>
       )}
 

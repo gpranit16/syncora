@@ -1665,21 +1665,133 @@
   }
   .presentation-filmstrip {
     width: 100%;
-    height: 130px;
-    max-height: 130px;
+    height: 120px;
+    max-height: 120px;
     flex-direction: row;
     overflow-x: auto;
     overflow-y: hidden;
   }
   .presentation-filmstrip .meeting-tile {
-    width: 170px;
-    min-width: 170px;
+    width: 150px;
+    min-width: 150px;
     height: 100%;
     min-height: 100%;
   }
 
-  .meeting-chat-sidebar {
+  .meeting-chat-sidebar,
+  .meeting-roster-sidebar {
     width: 100%;
+    max-width: 100vw;
+  }
+}
+
+@media (max-width: 768px) {
+  .meeting-header-bar {
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  .meeting-title {
+    max-width: 130px;
+    font-size: 13px;
+  }
+
+  .copy-code-btn span:not(.copied-icon) {
+    display: none;
+  }
+
+  .meeting-stage-layout {
+    padding: 8px 8px 86px 8px;
+  }
+
+  .grid-count-1 {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+  }
+
+  .grid-count-2 {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+
+  .grid-count-3,
+  .grid-count-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  /* Compact Native Dock on Phone Screens */
+  .meeting-controls-dock {
+    bottom: 12px;
+    bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+    padding: 4px 6px;
+    max-width: calc(100vw - 12px);
+    border-radius: 18px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .meeting-controls-dock::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dock-actions-row {
+    gap: 4px;
+    flex-wrap: nowrap;
+  }
+
+  .dock-btn {
+    height: 40px;
+    min-width: 40px;
+    padding: 0 6px;
+    border-radius: 10px;
+    gap: 0;
+  }
+
+  .dock-btn-label {
+    display: none;
+  }
+
+  .dock-btn.leave-btn {
+    height: 40px;
+    min-width: 40px;
+    padding: 0 10px;
+    border-radius: 10px;
+  }
+
+  .dock-btn.leave-btn .leave-text {
+    display: none;
+  }
+
+  .dock-btn.end-all-btn {
+    height: 40px;
+    min-width: 40px;
+    padding: 0 8px;
+    border-radius: 10px;
+  }
+
+  .dock-btn.end-all-btn .end-text {
+    display: none;
+  }
+
+  .participant-avatar-circle {
+    width: 58px;
+    height: 58px;
+    font-size: 22px;
+  }
+
+  .tile-overlay-bottom {
+    bottom: 6px;
+    left: 6px;
+    right: 6px;
+  }
+
+  .tile-user-name {
+    font-size: 11px;
+    max-width: 90px;
   }
 }
 
