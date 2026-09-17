@@ -16,9 +16,10 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
   }
 
   // 2. Otherwise, parse as enhanced markdown / text
-  const lines = content.split('\n');
+  const rawLines = content.split('\n');
   const elements: React.ReactNode[] = [];
   let currentList: { type: 'ul' | 'ol'; items: string[] } | null = null;
+  let currentTable: string[][] | null = null;
 
   const flushList = () => {
     if (!currentList) return;
@@ -37,12 +38,42 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
     currentList = null;
   };
 
-  for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i];
+  const flushTable = () => {
+    if (!currentTable || currentTable.length === 0) return;
+    const headers = currentTable[0];
+    const rows = currentTable.slice(1);
+    elements.push(
+      <div key={`tbl-${elements.length}`} className="ai-table-wrapper">
+        <table className="ai-table">
+          <thead>
+            <tr>
+              {headers.map((h, idx) => (
+                <th key={idx}>{renderInline(h.trim())}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rIdx) => (
+              <tr key={rIdx}>
+                {row.map((cell, cIdx) => (
+                  <td key={cIdx}>{renderInline(cell.trim())}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+    currentTable = null;
+  };
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const rawLine = rawLines[i];
     const line = rawLine.trim();
 
     if (!line) {
       flushList();
+      flushTable();
       continue;
     }
 
@@ -50,6 +81,28 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
     if (line === '{' || line === '}' || line === '```json' || line === '```') {
       continue;
     }
+
+    // Ignore conversational closing filler
+    if (/^(?:Let me know if you(?:'d| would)? like|Please let me know if you (?:have|need)|Hope this helps!|Feel free to ask)/i.test(line)) {
+      continue;
+    }
+
+    // Markdown Table Row: | cell1 | cell2 |
+    if (line.startsWith('|') && line.endsWith('|')) {
+      // Ignore separator row like |---|---|
+      if (/^\|[\s\-:|]+\|$/.test(line)) {
+        continue;
+      }
+      flushList();
+      const cells = line.slice(1, -1).split('|');
+      if (!currentTable) {
+        currentTable = [];
+      }
+      currentTable.push(cells);
+      continue;
+    }
+
+    flushTable();
 
     // Bullet list: "- ", "* ", "• "
     const bulletMatch = line.match(/^[-*•]\s+(.*)$/);
@@ -95,6 +148,7 @@ export const FormattedAIMessage: React.FC<FormattedAIMessageProps> = ({ content 
   }
 
   flushList();
+  flushTable();
 
   return <div className="ai-formatted-message">{elements}</div>;
 };

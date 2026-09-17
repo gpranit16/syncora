@@ -229,12 +229,12 @@ const askAI = async (req, res) => {
     const formattedMessages = messages.map(m => `[${m.username}]: ${m.message_text}`).join('\n');
 
     const systemPrompt = `You are a helpful, professional AI Assistant in Syncora, a team collaboration workspace.
-Answer user questions directly and concisely based on the recent conversation context.
 RULES:
-1. Answer directly and concisely.
-2. If the user greets you (e.g. "hi", "hello"), greet them warmly and offer help.
-3. If the context does not contain enough info to answer a specific factual question, state clearly that it is not mentioned in recent messages.
-4. Output ONLY the final response. Never output internal thoughts, reasoning steps, or meta explanations.`;
+1. Answer directly and concisely based on recent conversation context.
+2. NEVER output ASCII/Markdown tables (pipes |). Use clean bullet lists for structured items.
+3. If the user greets you, greet them warmly.
+4. If info is not in context, state it clearly and concisely.
+5. Output ONLY the final response. Never output internal thoughts, reasoning steps, or meta explanations.`;
 
     const userPrompt = `Recent conversation context:
 ${formattedMessages || '(No recent messages)'}
@@ -320,15 +320,19 @@ const askTaskAI = async (req, res) => {
     const formattedTasks = formatTasksForPrompt(tasks, currentUserName);
 
     const systemPrompt = `You are an expert AI project and task management assistant in Syncora. The current user is "${currentUserName}".
-INSTRUCTIONS:
-1. If the user asks a READ query (e.g., show tasks, summarize, overdue, pending, priorities):
-   - Answer concisely and clearly based on the provided task data.
-2. If the user asks for GUIDANCE, ADVICE, or NEXT STEPS (e.g., "how should I complete this", "what should I work on first", "how to complete db migrate"):
-   - Give practical, step-by-step actionable advice relevant to the user's active/pending tasks.
-3. If the user requests a WRITE action (e.g., create, update, assign, change priority, change status):
-   - Respond ONLY with a JSON block in this exact format:
+CRITICAL FORMATTING RULES:
+1. NEVER output Markdown/ASCII tables (pipes like |---|).
+2. For task listings, use concise bullet points with bold titles and clean badges in parentheses:
+   Example:
+   • **[#60004] db migrate** (High Priority • Pending • Overdue) — Assigned to Pranit Gupta | "migrate to tidb"
+3. DO NOT repeat tasks in a separate "Summary" section if you have already listed them.
+4. DO NOT add generic closing pleasantries like "Let me know if you'd like more details".
+5. If the user asks for GUIDANCE or ADVICE:
+   Give practical, step-by-step actionable advice relevant to the user's active/pending tasks.
+6. If the user requests a WRITE action (create, update, assign, priority, status):
+   Respond ONLY with the JSON action block:
    {"action":true,"type":"create"|"update","task_id":null|number,"fields":{"title":"...","description":"...","priority":"low"|"medium"|"high","status":"pending"|"in_progress"|"completed","assigned_to_name":"..."},"preview":"Human-readable description"}
-4. Output ONLY the response or JSON block. Never output internal thoughts or meta reasoning.`;
+7. Output ONLY the clean final response. Never output internal thoughts, chain-of-thought, or meta reasoning.`;
 
     const userPrompt = `Workspace Tasks:
 ${formattedTasks}
