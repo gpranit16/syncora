@@ -305,5 +305,33 @@ export const emitMeetingTranscriptChunk = (data: {
   getSocket().emit('meeting_transcript_chunk', data);
 };
 
+export const emitMeetingScreenShareStatus = (data: {
+  meeting_code: string;
+  is_sharing: boolean;
+}) => {
+  getSocket().emit('meeting_screen_share_status', data);
+};
+
+export const emitMeetingStopScreenShare = (data: {
+  meeting_code: string;
+  target_socket_id: string;
+}) => {
+  getSocket().emit('meeting_stop_screen_share', data);
+};
+
+export const emitMeetingSendMessage = (data: {
+  meeting_code: string;
+  message: string;
+}) => {
+  getSocket().emit('meeting_send_message', data);
+};
+
+export const emitMeetingToggleScreenShareLock = (data: {
+  meeting_code: string;
+  is_locked: boolean;
+}) => {
+  getSocket().emit('meeting_toggle_screen_share_lock', data);
+};
+
 
 

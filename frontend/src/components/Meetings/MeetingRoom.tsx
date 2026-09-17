@@ -17,6 +17,10 @@ import {
   Search,
   CheckCircle2,
   Loader2,
+  MonitorUp,
+  MonitorOff,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
 import client from '../../api/client';
 import { inviteToMeeting } from '../../api/meetings';
@@ -29,10 +33,22 @@ const ParticipantTile: React.FC<{
   stream?: MediaStream;
   isVideoMeeting: boolean;
   isHostUser: boolean;
+  isPresenter?: boolean;
   onMute?: (socketId: string) => void;
   onUnmute?: (socketId: string) => void;
   onRemove?: (socketId: string) => void;
-}> = ({ participant, stream, isVideoMeeting, isHostUser, onMute, onUnmute, onRemove }) => {
+  onStopScreenShare?: (socketId: string) => void;
+}> = ({
+  participant,
+  stream,
+  isVideoMeeting,
+  isHostUser,
+  isPresenter,
+  onMute,
+  onUnmute,
+  onRemove,
+  onStopScreenShare,
+}) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -67,7 +83,7 @@ const ParticipantTile: React.FC<{
   }, [stream]);
 
   return (
-    <div className={`meeting-tile ${showVideo ? 'has-video' : 'avatar-only'}`}>
+    <div className={`meeting-tile ${showVideo ? 'has-video' : 'avatar-only'} ${isPresenter ? 'is-presenter' : ''}`}>
       {/* Remote Audio Track */}
       <audio ref={audioRef} autoPlay playsInline />
 
@@ -107,6 +123,11 @@ const ParticipantTile: React.FC<{
               <Shield size={10} /> Host
             </span>
           )}
+          {isPresenter && (
+            <span className="tile-presenting-badge">
+              <MonitorUp size={10} /> Presenting
+            </span>
+          )}
         </div>
 
         <div className="tile-indicators">
@@ -125,6 +146,15 @@ const ParticipantTile: React.FC<{
       {/* Host Quick Actions Menu on Hover */}
       {isHostUser && participant.role !== 'host' && (
         <div className="tile-host-controls">
+          {isPresenter && onStopScreenShare && (
+            <button
+              className="tile-action-btn stop-share"
+              onClick={() => onStopScreenShare(participant.socketId)}
+              title="Stop participant's screen share"
+            >
+              <MonitorOff size={13} /> Stop Share
+            </button>
+          )}
           {participant.isMuted ? (
             onUnmute && (
               <button
@@ -170,7 +200,8 @@ const LocalTile: React.FC<{
   isMuted: boolean;
   isCameraOff: boolean;
   isVideoMeeting: boolean;
-}> = ({ stream, userName, userAvatar, isHost, isMuted, isCameraOff, isVideoMeeting }) => {
+  isScreenSharing?: boolean;
+}> = ({ stream, userName, userAvatar, isHost, isMuted, isCameraOff, isVideoMeeting, isScreenSharing }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const hasVideoTrack = Boolean(
@@ -204,7 +235,7 @@ const LocalTile: React.FC<{
   }, [stream, showVideo]);
 
   return (
-    <div className={`meeting-tile local-tile ${showVideo ? 'has-video' : 'avatar-only'}`}>
+    <div className={`meeting-tile local-tile ${showVideo ? 'has-video' : 'avatar-only'} ${isScreenSharing ? 'is-presenter' : ''}`}>
       {showVideo ? (
         <video
           ref={setLocalVideoNode}
@@ -234,6 +265,11 @@ const LocalTile: React.FC<{
               <Shield size={10} /> Host
             </span>
           )}
+          {isScreenSharing && (
+            <span className="tile-presenting-badge">
+              <MonitorUp size={10} /> Presenting
+            </span>
+          )}
         </div>
 
         <div className="tile-indicators">
@@ -252,6 +288,95 @@ const LocalTile: React.FC<{
   );
 };
 
+// Google Meet Spotlight Presentation View
+const PresentationStage: React.FC<{
+  stream?: MediaStream | null;
+  presenterName: string;
+  isLocalPresenter: boolean;
+  isHostUser: boolean;
+  targetSocketId?: string;
+  onStopSelfSharing?: () => void;
+  onHostStopSharing?: (socketId: string) => void;
+}> = ({
+  stream,
+  presenterName,
+  isLocalPresenter,
+  isHostUser,
+  targetSocketId,
+  onStopSelfSharing,
+  onHostStopSharing,
+}) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const videoEl = videoRef.current;
+    if (videoEl && stream) {
+      if (videoEl.srcObject !== stream) {
+        videoEl.srcObject = stream;
+      }
+      videoEl.play().catch((err) => {
+        console.warn('[ScreenShare] Presentation video play error:', err);
+      });
+    }
+  }, [stream]);
+
+  const hasVideoTrack = Boolean(
+    stream &&
+    stream.getVideoTracks().length > 0 &&
+    stream.getVideoTracks().some((t) => t.readyState === 'live')
+  );
+
+  return (
+    <div className="presentation-spotlight-box">
+      {hasVideoTrack ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={isLocalPresenter}
+          className="presentation-video-element"
+        />
+      ) : (
+        <div className="presentation-placeholder">
+          <MonitorUp size={44} className="presentation-pulse-icon" />
+          <h3>{isLocalPresenter ? 'You are sharing your screen' : `${presenterName} is sharing their screen`}</h3>
+          <p>Live display stream is active and broadcasting to everyone in the room.</p>
+        </div>
+      )}
+
+      {/* Presentation Top Control Bar */}
+      <div className="presentation-stage-header">
+        <div className="presentation-presenter-pill">
+          <MonitorUp size={14} className="screen-active-icon" />
+          <span>{isLocalPresenter ? 'You are presenting to everyone' : `${presenterName} is presenting`}</span>
+        </div>
+
+        <div className="presentation-actions">
+          {isLocalPresenter ? (
+            <button
+              className="stop-presenting-pill-btn"
+              onClick={onStopSelfSharing}
+              title="Stop sharing your screen"
+            >
+              <MonitorOff size={14} /> Stop Presenting
+            </button>
+          ) : (
+            isHostUser && targetSocketId && (
+              <button
+                className="stop-presenting-pill-btn host-action"
+                onClick={() => onHostStopSharing && onHostStopSharing(targetSocketId)}
+                title="Stop participant's screen share (Host Control)"
+              >
+                <MonitorOff size={14} /> Stop Screen Share (Host)
+              </button>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const MeetingRoom: React.FC = () => {
   const { user } = useAuth();
   const {
@@ -261,9 +386,18 @@ export const MeetingRoom: React.FC = () => {
     participants,
     isMuted,
     isCameraOff,
+    isScreenSharing,
+    isScreenShareLocked,
+    screenPresenter,
+    meetingMessages,
     isHost,
     toggleMute,
     toggleCamera,
+    startScreenShare,
+    stopScreenShare,
+    toggleScreenShareLock,
+    hostStopParticipantScreenShare,
+    sendMeetingChatMessage,
     leaveMeeting,
     endMeetingForEveryone,
     hostMuteParticipant,
@@ -273,8 +407,14 @@ export const MeetingRoom: React.FC = () => {
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+
+  // In-Meeting Chat state
+  const [chatInputText, setChatInputText] = useState('');
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const chatMessagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // In-Meeting Invite state
   const [workspaceMembers, setWorkspaceMembers] = useState<any[]>([]);
@@ -292,6 +432,41 @@ export const MeetingRoom: React.FC = () => {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Track unread chat messages & auto-scroll
+  useEffect(() => {
+    if (showChat) {
+      setUnreadChatCount(0);
+      chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else if (meetingMessages.length > 0) {
+      setUnreadChatCount((prev) => prev + 1);
+    }
+  }, [meetingMessages, showChat]);
+
+  // Reset unread counter when opening chat
+  const handleToggleChat = () => {
+    const nextState = !showChat;
+    setShowChat(nextState);
+    if (nextState) {
+      setUnreadChatCount(0);
+      setShowRoster(false); // Clean panel toggle
+    }
+  };
+
+  const handleToggleRoster = () => {
+    const nextState = !showRoster;
+    setShowRoster(nextState);
+    if (nextState) {
+      setShowChat(false);
+    }
+  };
+
+  const handleSendChatMessage = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!chatInputText.trim()) return;
+    sendMeetingChatMessage(chatInputText);
+    setChatInputText('');
+  };
 
   // Persistent refs to avoid effect re-triggers on every 1-second render tick
   const meetingCodeRef = useRef<string | null>(null);
@@ -450,7 +625,7 @@ export const MeetingRoom: React.FC = () => {
       cleanupActiveInstance();
     }
 
-    // Active Watchdog Heartbeat: ensures recognition never stalls or dies during long meetings
+    // Active Watchdog Heartbeat
     if (watchdogTimerRef.current) clearInterval(watchdogTimerRef.current);
     watchdogTimerRef.current = setInterval(() => {
       if (
@@ -481,6 +656,16 @@ export const MeetingRoom: React.FC = () => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatMessageTime = (isoString?: string) => {
+    if (!isoString) return '';
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
   };
 
   const handleCopyLink = () => {
@@ -527,6 +712,12 @@ export const MeetingRoom: React.FC = () => {
   const participantsList = Array.from(participants.values());
   const totalCount = participantsList.length + 1; // +1 for local user
 
+  // Determine active presentation stream
+  const isLocalPresenter = isScreenSharing || (Boolean(screenPresenter && user && screenPresenter.userId === user.user_id));
+  const activePresentationStream = isLocalPresenter
+    ? localStream
+    : (screenPresenter ? remoteStreams.get(screenPresenter.socketId) : null);
+
   return (
     <div className="meeting-room-container">
       {/* Top Header Bar */}
@@ -538,6 +729,13 @@ export const MeetingRoom: React.FC = () => {
             {isVideoMeeting ? 'Video' : 'Voice'}
           </span>
           <span className="meeting-timer-badge">{formatDuration(callDuration)}</span>
+
+          {screenPresenter && (
+            <span className="meeting-presenting-pill">
+              <MonitorUp size={12} />
+              {isLocalPresenter ? 'You are sharing screen' : `${screenPresenter.userName} is presenting`}
+            </span>
+          )}
         </div>
 
         <div className="header-right">
@@ -546,9 +744,20 @@ export const MeetingRoom: React.FC = () => {
             <span>{copiedLink ? 'Link Copied' : meeting?.meeting_code}</span>
           </button>
 
+          {/* Chat Toggle Header Button */}
+          <button
+            className={`roster-toggle-btn ${showChat ? 'active' : ''}`}
+            onClick={handleToggleChat}
+            title="In-call messages"
+          >
+            <MessageSquare size={16} />
+            {unreadChatCount > 0 && <span className="participant-count-badge chat-unread">{unreadChatCount}</span>}
+          </button>
+
+          {/* Participants Toggle Header Button */}
           <button
             className={`roster-toggle-btn ${showRoster ? 'active' : ''}`}
-            onClick={() => setShowRoster(!showRoster)}
+            onClick={handleToggleRoster}
             title="Toggle Participants"
           >
             <Users size={16} />
@@ -557,34 +766,151 @@ export const MeetingRoom: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Grid Stage */}
+      {/* Main Stage Layout */}
       <main className="meeting-stage-layout">
-        <div className={`meeting-tiles-grid grid-count-${Math.min(totalCount, 12)}`}>
-          {/* Local User Tile */}
-          <LocalTile
-            stream={localStream}
-            userName={user?.name || 'You'}
-            userAvatar={(user as any)?.avatar || null}
-            isHost={isHost}
-            isMuted={isMuted}
-            isCameraOff={isCameraOff}
-            isVideoMeeting={isVideoMeeting}
-          />
+        {screenPresenter ? (
+          /* Spotlight Presentation View Mode */
+          <div className="presentation-layout-container">
+            <div className="presentation-main-stage">
+              <PresentationStage
+                stream={activePresentationStream}
+                presenterName={screenPresenter.userName}
+                isLocalPresenter={isLocalPresenter}
+                isHostUser={isHost}
+                targetSocketId={screenPresenter.socketId}
+                onStopSelfSharing={stopScreenShare}
+                onHostStopSharing={hostStopParticipantScreenShare}
+              />
+            </div>
 
-          {/* Remote Participants Tiles */}
-          {participantsList.map((peer) => (
-            <ParticipantTile
-              key={peer.socketId}
-              participant={peer}
-              stream={remoteStreams.get(peer.socketId)}
+            {/* Participant Filmstrip alongside Presentation */}
+            <div className="presentation-filmstrip">
+              <LocalTile
+                stream={localStream}
+                userName={user?.name || 'You'}
+                userAvatar={(user as any)?.avatar || null}
+                isHost={isHost}
+                isMuted={isMuted}
+                isCameraOff={isCameraOff}
+                isVideoMeeting={isVideoMeeting}
+                isScreenSharing={isLocalPresenter}
+              />
+
+              {participantsList.map((peer) => (
+                <ParticipantTile
+                  key={peer.socketId}
+                  participant={peer}
+                  stream={remoteStreams.get(peer.socketId)}
+                  isVideoMeeting={isVideoMeeting}
+                  isHostUser={isHost}
+                  isPresenter={screenPresenter?.socketId === peer.socketId}
+                  onMute={hostMuteParticipant}
+                  onUnmute={hostUnmuteParticipant}
+                  onRemove={hostRemoveParticipant}
+                  onStopScreenShare={hostStopParticipantScreenShare}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          /* Standard Multi-Participant Grid Mode */
+          <div className={`meeting-tiles-grid grid-count-${Math.min(totalCount, 12)}`}>
+            {/* Local User Tile */}
+            <LocalTile
+              stream={localStream}
+              userName={user?.name || 'You'}
+              userAvatar={(user as any)?.avatar || null}
+              isHost={isHost}
+              isMuted={isMuted}
+              isCameraOff={isCameraOff}
               isVideoMeeting={isVideoMeeting}
-              isHostUser={isHost}
-              onMute={hostMuteParticipant}
-              onUnmute={hostUnmuteParticipant}
-              onRemove={hostRemoveParticipant}
+              isScreenSharing={isScreenSharing}
             />
-          ))}
-        </div>
+
+            {/* Remote Participants Tiles */}
+            {participantsList.map((peer) => (
+              <ParticipantTile
+                key={peer.socketId}
+                participant={peer}
+                stream={remoteStreams.get(peer.socketId)}
+                isVideoMeeting={isVideoMeeting}
+                isHostUser={isHost}
+                isPresenter={false}
+                onMute={hostMuteParticipant}
+                onUnmute={hostUnmuteParticipant}
+                onRemove={hostRemoveParticipant}
+                onStopScreenShare={hostStopParticipantScreenShare}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* In-Meeting Chat Drawer (Google Meet style) */}
+        {showChat && (
+          <aside className="meeting-chat-sidebar">
+            <div className="chat-sidebar-header">
+              <div className="chat-title-group">
+                <MessageSquare size={16} />
+                <div>
+                  <h3>In-call messages</h3>
+                  <span className="chat-disclaimer">Messages are visible to participants in this call</span>
+                </div>
+              </div>
+              <button className="roster-close-btn" onClick={() => setShowChat(false)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-messages-container">
+              {meetingMessages.length === 0 ? (
+                <div className="chat-empty-state">
+                  <MessageSquare size={32} className="chat-empty-icon" />
+                  <p className="chat-empty-text">No messages yet</p>
+                  <span>Send a message to everyone in the call.</span>
+                </div>
+              ) : (
+                meetingMessages.map((msg) => {
+                  const isMine = user && msg.sender_id === user.user_id;
+
+                  return (
+                    <div key={msg.message_id} className={`chat-message-item ${isMine ? 'mine' : ''}`}>
+                      <div className="chat-msg-header">
+                        <div className="chat-msg-sender-info">
+                          <span className="chat-sender-name">{msg.sender_name}</span>
+                          {isMine && <span className="chat-tag-badge you">You</span>}
+                          {msg.is_host && <span className="chat-tag-badge host">Host</span>}
+                        </div>
+                        <span className="chat-msg-time">{formatMessageTime(msg.created_at)}</span>
+                      </div>
+                      <div className="chat-msg-bubble">
+                        <p>{msg.text}</p>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={chatMessagesEndRef} />
+            </div>
+
+            <form className="chat-input-form" onSubmit={handleSendChatMessage}>
+              <input
+                type="text"
+                placeholder="Send a message to everyone..."
+                value={chatInputText}
+                onChange={(e) => setChatInputText(e.target.value)}
+                maxLength={500}
+              />
+              <button
+                type="submit"
+                className="chat-send-btn"
+                disabled={!chatInputText.trim()}
+                title="Send message"
+              >
+                <Send size={15} />
+              </button>
+            </form>
+          </aside>
+        )}
 
         {/* Participants Sidebar / Roster */}
         {showRoster && (
@@ -599,6 +925,26 @@ export const MeetingRoom: React.FC = () => {
               </button>
             </div>
 
+            {/* Host Meeting Controls */}
+            {isHost && (
+              <div className="roster-host-controls-banner">
+                <div className="host-control-label-group">
+                  <span className="host-control-heading">Participant Screen Sharing</span>
+                  <span className="host-control-subtext">
+                    {isScreenShareLocked ? 'Only host can present' : 'Everyone can share screen'}
+                  </span>
+                </div>
+                <label className="syncora-toggle-switch" title="Toggle screen sharing permission for participants">
+                  <input
+                    type="checkbox"
+                    checked={!isScreenShareLocked}
+                    onChange={(e) => toggleScreenShareLock(!e.target.checked)}
+                  />
+                  <span className="syncora-toggle-slider" />
+                </label>
+              </div>
+            )}
+
             <div className="roster-list">
               {/* Local User in Roster */}
               <div className="roster-item local-roster-item">
@@ -612,6 +958,7 @@ export const MeetingRoom: React.FC = () => {
                 <div className="roster-user-details">
                   <span className="roster-name">{user?.name || 'You'} (You)</span>
                   {isHost && <span className="roster-role-tag host">Host</span>}
+                  {isScreenSharing && <span className="roster-role-tag presenting">Sharing</span>}
                 </div>
                 <div className="roster-status-icons">
                   {isMuted ? <MicOff size={14} className="muted-icon" /> : <Mic size={14} />}
@@ -620,55 +967,69 @@ export const MeetingRoom: React.FC = () => {
               </div>
 
               {/* Remote Participants in Roster */}
-              {participantsList.map((peer) => (
-                <div key={peer.socketId} className="roster-item">
-                  <div className="roster-avatar">
-                    {peer.userAvatar ? (
-                      <img src={peer.userAvatar} alt={peer.userName} />
-                    ) : (
-                      <span>{peer.userName ? peer.userName[0].toUpperCase() : 'U'}</span>
+              {participantsList.map((peer) => {
+                const isPeerPresenting = screenPresenter?.socketId === peer.socketId;
+
+                return (
+                  <div key={peer.socketId} className="roster-item">
+                    <div className="roster-avatar">
+                      {peer.userAvatar ? (
+                        <img src={peer.userAvatar} alt={peer.userName} />
+                      ) : (
+                        <span>{peer.userName ? peer.userName[0].toUpperCase() : 'U'}</span>
+                      )}
+                    </div>
+                    <div className="roster-user-details">
+                      <span className="roster-name">{peer.userName}</span>
+                      {peer.role === 'host' && <span className="roster-role-tag host">Host</span>}
+                      {isPeerPresenting && <span className="roster-role-tag presenting">Sharing</span>}
+                    </div>
+                    <div className="roster-status-icons">
+                      {peer.isMuted ? <MicOff size={14} className="muted-icon" /> : <Mic size={14} />}
+                      {isVideoMeeting && (peer.isCameraOff ? <VideoOff size={14} className="muted-icon" /> : <Video size={14} />)}
+                    </div>
+
+                    {/* Host Action Controls in Roster */}
+                    {isHost && peer.role !== 'host' && (
+                      <div className="roster-host-actions">
+                        {isPeerPresenting && (
+                          <button
+                            className="roster-action-btn stop-share"
+                            onClick={() => hostStopParticipantScreenShare(peer.socketId)}
+                            title="Stop screen share"
+                          >
+                            <MonitorOff size={13} />
+                          </button>
+                        )}
+                        {peer.isMuted ? (
+                          <button
+                            className="roster-action-btn unmute"
+                            onClick={() => hostUnmuteParticipant(peer.socketId)}
+                            title="Unmute user"
+                          >
+                            <Mic size={13} />
+                          </button>
+                        ) : (
+                          <button
+                            className="roster-action-btn"
+                            onClick={() => hostMuteParticipant(peer.socketId)}
+                            title="Mute user"
+                          >
+                            <MicOff size={13} />
+                          </button>
+                        )}
+                        <button
+                          className="roster-action-btn remove"
+                          onClick={() => hostRemoveParticipant(peer.socketId)}
+                          title="Remove user"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
                     )}
                   </div>
-                  <div className="roster-user-details">
-                    <span className="roster-name">{peer.userName}</span>
-                    {peer.role === 'host' && <span className="roster-role-tag host">Host</span>}
-                  </div>
-                  <div className="roster-status-icons">
-                    {peer.isMuted ? <MicOff size={14} className="muted-icon" /> : <Mic size={14} />}
-                    {isVideoMeeting && (peer.isCameraOff ? <VideoOff size={14} className="muted-icon" /> : <Video size={14} />)}
-                  </div>
-
-                  {/* Host Action Controls in Roster */}
-                  {isHost && peer.role !== 'host' && (
-                    <div className="roster-host-actions">
-                      {peer.isMuted ? (
-                        <button
-                          className="roster-action-btn unmute"
-                          onClick={() => hostUnmuteParticipant(peer.socketId)}
-                          title="Unmute user"
-                        >
-                          <Mic size={13} />
-                        </button>
-                      ) : (
-                        <button
-                          className="roster-action-btn"
-                          onClick={() => hostMuteParticipant(peer.socketId)}
-                          title="Mute user"
-                        >
-                          <MicOff size={13} />
-                        </button>
-                      )}
-                      <button
-                        className="roster-action-btn remove"
-                        onClick={() => hostRemoveParticipant(peer.socketId)}
-                        title="Remove user"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="roster-footer">
@@ -680,7 +1041,7 @@ export const MeetingRoom: React.FC = () => {
         )}
       </main>
 
-      {/* Floating Bottom Controls Dock */}
+      {/* Floating Bottom Controls Dock (Google Meet Style) */}
       <footer className="meeting-controls-dock" role="toolbar" aria-label="Meeting controls">
         <div className="dock-actions-row">
           {/* Mic Toggle */}
@@ -709,11 +1070,45 @@ export const MeetingRoom: React.FC = () => {
             </button>
           )}
 
+          {/* Live Screen Share Toggle Button (Both Video & Voice meets) */}
+          <button
+            type="button"
+            className={`dock-btn ${isScreenSharing ? 'screen-share-active' : ''} ${isScreenShareLocked && !isHost && !isScreenSharing ? 'disabled-control' : ''}`}
+            onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+            disabled={isScreenShareLocked && !isHost && !isScreenSharing}
+            title={
+              isScreenSharing
+                ? 'Stop sharing screen'
+                : isScreenShareLocked && !isHost
+                ? 'Screen sharing is disabled by the host'
+                : 'Share entire screen or window'
+            }
+            aria-label={isScreenSharing ? 'Stop sharing screen' : 'Share screen'}
+          >
+            {isScreenSharing ? <MonitorOff size={19} /> : <MonitorUp size={19} />}
+            <span className="dock-btn-label">{isScreenSharing ? 'Stop Share' : 'Share Screen'}</span>
+          </button>
+
+          {/* In-Meeting Chat Toggle Button */}
+          <button
+            type="button"
+            className={`dock-btn ${showChat ? 'active' : ''}`}
+            onClick={handleToggleChat}
+            title="In-call chat"
+            aria-label="In-call chat"
+          >
+            <div className="dock-icon-with-badge">
+              <MessageSquare size={19} />
+              {unreadChatCount > 0 && <span className="dock-badge chat-badge">{unreadChatCount}</span>}
+            </div>
+            <span className="dock-btn-label">Chat</span>
+          </button>
+
           {/* Participants Toggle */}
           <button
             type="button"
             className={`dock-btn ${showRoster ? 'active' : ''}`}
-            onClick={() => setShowRoster(!showRoster)}
+            onClick={handleToggleRoster}
             title="Participants"
             aria-label="Participants list"
           >

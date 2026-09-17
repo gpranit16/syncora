@@ -401,4 +401,85 @@ describe("Meeting API and Sockets", () => {
       done();
     });
   });
+
+  test("Socket Screen Share and In-Meeting Chat Flow", (done) => {
+    mockMeetings.push({
+      meeting_id: 101,
+      workspace_id: 1,
+      host_user_id: 1,
+      title: "Screen Share & Chat Test",
+      meeting_type: "video",
+      meeting_code: "xyz-123-789",
+      status: "active",
+      created_at: new Date(),
+      ended_at: null,
+    });
+
+    const clientAlice = Client(`http://localhost:${port}`);
+    const clientBob = Client(`http://localhost:${port}`);
+
+    clientAlice.on("connect", () => {
+      clientAlice.emit("user_online", 1);
+      clientAlice.emit("meeting_join", {
+        meeting_code: "xyz-123-789",
+        user_id: 1,
+        user_name: "Alice",
+      });
+    });
+
+    clientAlice.on("meeting_joined_success", () => {
+      clientBob.emit("user_online", 2);
+      clientBob.emit("meeting_join", {
+        meeting_code: "xyz-123-789",
+        user_id: 2,
+        user_name: "Bob",
+      });
+    });
+
+    clientBob.on("meeting_joined_success", (data) => {
+      expect(data.meeting.meeting_code).toBe("xyz-123-789");
+      expect(data.chat_history).toEqual([]);
+
+      // Bob starts screen sharing
+      clientBob.emit("meeting_screen_share_status", {
+        meeting_code: "xyz-123-789",
+        is_sharing: true,
+      });
+    });
+
+    clientAlice.on("meeting_screen_share_status", (shareStatus) => {
+      if (shareStatus.is_sharing) {
+        expect(shareStatus.user_id).toBe(2);
+        expect(shareStatus.user_name).toBe("Bob");
+
+        // Alice (Host) tests in-meeting chat
+        clientAlice.emit("meeting_send_message", {
+          meeting_code: "xyz-123-789",
+          message: "Hello team! Can you see Bob's screen?",
+        });
+      }
+    });
+
+    clientBob.on("meeting_new_message", (msg) => {
+      expect(msg.sender_id).toBe(1);
+      expect(msg.sender_name).toBe("Alice");
+      expect(msg.is_host).toBe(true);
+      expect(msg.text).toBe("Hello team! Can you see Bob's screen?");
+
+      // Alice (Host) stops Bob's screen share
+      clientAlice.emit("meeting_stop_screen_share", {
+        meeting_code: "xyz-123-789",
+        target_socket_id: clientBob.id,
+      });
+    });
+
+    clientBob.on("meeting_force_stop_screen_share", (stopData) => {
+      expect(stopData.by_user_id).toBe(1);
+
+      clientAlice.disconnect();
+      clientBob.disconnect();
+      done();
+    });
+  });
 });
+

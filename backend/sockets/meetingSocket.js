@@ -82,6 +82,9 @@ const meetingSocket = (io, socket, onlineUsers) => {
           workspaceId: meeting.workspace_id,
           createdAt: meeting.created_at || new Date(),
           participants: new Map(),
+          screenPresenter: null,
+          screenShareLocked: false,
+          messages: [],
         });
       }
 
@@ -132,6 +135,9 @@ const meetingSocket = (io, socket, onlineUsers) => {
         },
         my_socket_id: socket.id,
         existing_participants: existingParticipants,
+        screen_presenter: room.screenPresenter || null,
+        screen_share_locked: !!room.screenShareLocked,
+        chat_history: room.messages || [],
       });
 
       // Broadcast new participant to everyone else in the meeting room
@@ -296,6 +302,14 @@ const meetingSocket = (io, socket, onlineUsers) => {
 
     const target = room.participants.get(target_socket_id);
     if (target) {
+      if (room.screenPresenter && room.screenPresenter.socketId === target_socket_id) {
+        room.screenPresenter = null;
+        io.to(`meeting_${meeting_code}`).emit("meeting_screen_share_status", {
+          socket_id: target_socket_id,
+          is_sharing: false,
+        });
+      }
+
       io.to(target_socket_id).emit("meeting_removed", {
         reason: "You were removed from the meeting by the host",
       });
@@ -313,6 +327,150 @@ const meetingSocket = (io, socket, onlineUsers) => {
         [room.meetingId, target.userId]
       ).catch(err => console.error("meeting_remove_participant DB err:", err.message));
     }
+  });
+
+  // Screen Share status broadcast (Google Meet style)
+  socket.on("meeting_screen_share_status", (data) => {
+    const { meeting_code, is_sharing } = data || {};
+    if (!meeting_code) return;
+
+    const room = activeMeetingRooms.get(meeting_code);
+    if (!room) return;
+
+    const participant = room.participants.get(socket.id);
+    const userId = participant?.userId || Number(onlineUsers.get(socket.id));
+    const userName = participant?.userName || "User";
+
+    // Permission check: If host disabled screen sharing, block non-host from sharing
+    if (is_sharing && room.screenShareLocked && userId !== room.hostUserId) {
+      socket.emit("meeting_error", { message: "Screen sharing is disabled by the meeting host" });
+      return;
+    }
+
+    if (is_sharing) {
+      room.screenPresenter = {
+        socketId: socket.id,
+        userId: userId,
+        userName: userName,
+      };
+    } else {
+      if (room.screenPresenter && room.screenPresenter.socketId === socket.id) {
+        room.screenPresenter = null;
+      }
+    }
+
+    const roomName = `meeting_${meeting_code}`;
+    io.to(roomName).emit("meeting_screen_share_status", {
+      socket_id: socket.id,
+      user_id: userId,
+      user_name: userName,
+      is_sharing: !!is_sharing,
+    });
+  });
+
+  // Host: Toggle/Lock screen sharing permissions for the whole meeting
+  socket.on("meeting_toggle_screen_share_lock", (data) => {
+    const { meeting_code, is_locked } = data || {};
+    if (!meeting_code) return;
+
+    const room = activeMeetingRooms.get(meeting_code);
+    const userId = Number(onlineUsers.get(socket.id));
+    if (!room || room.hostUserId !== userId) {
+      socket.emit("meeting_error", { message: "Only the host can toggle screen share permissions" });
+      return;
+    }
+
+    room.screenShareLocked = !!is_locked;
+
+    // If locked and non-host member is currently sharing, force stop their share
+    if (room.screenShareLocked && room.screenPresenter) {
+      const presenterSocketId = room.screenPresenter.socketId;
+      const presenterUserId = room.screenPresenter.userId;
+      if (presenterUserId !== room.hostUserId) {
+        room.screenPresenter = null;
+        io.to(presenterSocketId).emit("meeting_force_stop_screen_share", {
+          by_user_id: userId,
+          reason: "Screen sharing was disabled by the host",
+        });
+        io.to(`meeting_${meeting_code}`).emit("meeting_screen_share_status", {
+          socket_id: presenterSocketId,
+          is_sharing: false,
+        });
+      }
+    }
+
+    const roomName = `meeting_${meeting_code}`;
+    io.to(roomName).emit("meeting_screen_share_lock_updated", {
+      is_locked: room.screenShareLocked,
+      by_user_id: userId,
+    });
+  });
+
+  // Host: Stop someone else's screen share
+  socket.on("meeting_stop_screen_share", (data) => {
+    const { meeting_code, target_socket_id } = data || {};
+    if (!meeting_code || !target_socket_id) return;
+
+    const room = activeMeetingRooms.get(meeting_code);
+    const userId = Number(onlineUsers.get(socket.id));
+    if (!room || room.hostUserId !== userId) {
+      socket.emit("meeting_error", { message: "Only the host can stop screen sharing" });
+      return;
+    }
+
+    if (room.screenPresenter && room.screenPresenter.socketId === target_socket_id) {
+      room.screenPresenter = null;
+    }
+
+    // Force stop event directly to target presenter
+    io.to(target_socket_id).emit("meeting_force_stop_screen_share", {
+      by_user_id: userId,
+    });
+
+    // Broadcast room status that screen share ended
+    const roomName = `meeting_${meeting_code}`;
+    io.to(roomName).emit("meeting_screen_share_status", {
+      socket_id: target_socket_id,
+      is_sharing: false,
+    });
+  });
+
+  // In-Meeting Chat: Send and broadcast messages to the meeting room
+  socket.on("meeting_send_message", (data) => {
+    const { meeting_code, message } = data || {};
+    if (!meeting_code || !message || !message.trim()) return;
+
+    const room = activeMeetingRooms.get(meeting_code);
+    if (!room) return;
+
+    const participant = room.participants.get(socket.id);
+    const userId = participant?.userId || Number(onlineUsers.get(socket.id));
+    const userName = participant?.userName || "User";
+    const userAvatar = participant?.userAvatar || null;
+    const isHost = room.hostUserId === userId;
+
+    if (!room.messages) room.messages = [];
+
+    const msgObj = {
+      message_id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      meeting_code,
+      sender_socket_id: socket.id,
+      sender_id: userId,
+      sender_name: userName,
+      sender_avatar: userAvatar,
+      is_host: isHost,
+      text: message.trim(),
+      created_at: new Date().toISOString(),
+    };
+
+    // Keep up to 200 in-memory messages per meeting
+    room.messages.push(msgObj);
+    if (room.messages.length > 200) {
+      room.messages.shift();
+    }
+
+    const roomName = `meeting_${meeting_code}`;
+    io.to(roomName).emit("meeting_new_message", msgObj);
   });
 
   // Live multi-participant speech-to-text transcript chunk handler
@@ -490,6 +648,14 @@ const meetingSocket = (io, socket, onlineUsers) => {
       const p = room.participants.get(socket.id);
       room.participants.delete(socket.id);
 
+      if (room.screenPresenter && room.screenPresenter.socketId === socket.id) {
+        room.screenPresenter = null;
+        io.to(`meeting_${meeting_code}`).emit("meeting_screen_share_status", {
+          socket_id: socket.id,
+          is_sharing: false,
+        });
+      }
+
       const roomName = `meeting_${meeting_code}`;
       socket.leave(roomName);
 
@@ -571,6 +737,14 @@ const handleMeetingDisconnect = (io, socket) => {
     if (room.participants.has(socket.id)) {
       const p = room.participants.get(socket.id);
       room.participants.delete(socket.id);
+
+      if (room.screenPresenter && room.screenPresenter.socketId === socket.id) {
+        room.screenPresenter = null;
+        io.to(`meeting_${code}`).emit("meeting_screen_share_status", {
+          socket_id: socket.id,
+          is_sharing: false,
+        });
+      }
 
       const roomName = `meeting_${code}`;
       socket.leave(roomName);

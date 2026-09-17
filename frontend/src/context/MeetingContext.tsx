@@ -11,6 +11,10 @@ import {
   emitMeetingRemoveParticipant,
   emitMeetingEnd,
   emitMeetingLeave,
+  emitMeetingScreenShareStatus,
+  emitMeetingStopScreenShare,
+  emitMeetingSendMessage,
+  emitMeetingToggleScreenShareLock,
 } from '../socket/socketManager';
 import { Meeting, getMeetingByCode } from '../api/meetings';
 
@@ -53,6 +57,24 @@ export interface MeetingParticipantPeer {
   joinedAt?: string;
 }
 
+export interface InMeetingChatMessage {
+  message_id: string;
+  meeting_code: string;
+  sender_socket_id: string;
+  sender_id: number;
+  sender_name: string;
+  sender_avatar?: string | null;
+  is_host: boolean;
+  text: string;
+  created_at: string;
+}
+
+export interface ScreenPresenter {
+  socketId: string;
+  userId: number;
+  userName: string;
+}
+
 export type MeetingStatus = 'idle' | 'prejoin' | 'joining' | 'in_meeting' | 'ended' | 'error';
 
 interface MeetingContextType {
@@ -64,6 +86,10 @@ interface MeetingContextType {
   participants: Map<string, MeetingParticipantPeer>;
   isMuted: boolean;
   isCameraOff: boolean;
+  isScreenSharing: boolean;
+  isScreenShareLocked: boolean;
+  screenPresenter: ScreenPresenter | null;
+  meetingMessages: InMeetingChatMessage[];
   isHost: boolean;
   mySocketId: string | null;
   prepareMeeting: (meetingCode: string) => Promise<boolean>;
@@ -72,6 +98,11 @@ interface MeetingContextType {
   endMeetingForEveryone: () => Promise<void>;
   toggleMute: () => void;
   toggleCamera: () => Promise<void>;
+  startScreenShare: () => Promise<void>;
+  stopScreenShare: () => void;
+  toggleScreenShareLock: (locked: boolean) => void;
+  hostStopParticipantScreenShare: (targetSocketId: string) => void;
+  sendMeetingChatMessage: (text: string) => void;
   hostMuteParticipant: (socketId: string) => void;
   hostUnmuteParticipant: (socketId: string) => void;
   hostRemoveParticipant: (socketId: string) => void;
@@ -91,6 +122,10 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [participants, setParticipants] = useState<Map<string, MeetingParticipantPeer>>(new Map());
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isCameraOff, setIsCameraOff] = useState<boolean>(false);
+  const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
+  const [isScreenShareLocked, setIsScreenShareLocked] = useState<boolean>(false);
+  const [screenPresenter, setScreenPresenter] = useState<ScreenPresenter | null>(null);
+  const [meetingMessages, setMeetingMessages] = useState<InMeetingChatMessage[]>([]);
   const [mySocketId, setMySocketId] = useState<string | null>(null);
 
   const isHost = Boolean(
@@ -101,11 +136,27 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const candidateQueueRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const remoteStreamMapRef = useRef<Map<string, MediaStream>>(new Map());
   const localStreamRef = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const savedCameraTrackRef = useRef<MediaStreamTrack | null>(null);
   const meetingRef = useRef<Meeting | null>(null);
   meetingRef.current = meeting;
 
   // Cleanup helper
   const cleanUpMediaAndPeers = useCallback(() => {
+    // Stop screen share tracks
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (_) {}
+      });
+      screenStreamRef.current = null;
+    }
+    savedCameraTrackRef.current = null;
+    setIsScreenSharing(false);
+    setScreenPresenter(null);
+    setMeetingMessages([]);
+
     // Stop local tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
@@ -361,6 +412,11 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const handleMeetingJoinedSuccess = async (data: any) => {
       setMeetingStatus('in_meeting');
+      if (data.my_socket_id) setMySocketId(data.my_socket_id);
+      if (data.screen_presenter) setScreenPresenter(data.screen_presenter);
+      if (typeof data.screen_share_locked === 'boolean') setIsScreenShareLocked(data.screen_share_locked);
+      if (data.chat_history && Array.isArray(data.chat_history)) setMeetingMessages(data.chat_history);
+
       const existingPeers: any[] = data.existing_participants || [];
       const newParticipantsMap = new Map<string, MeetingParticipantPeer>();
 
@@ -601,6 +657,76 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setErrorMessage(data?.message || 'Meeting error occurred');
     };
 
+    const handleMeetingScreenShareStatus = (data: any) => {
+      const { socket_id, user_id, user_name, is_sharing } = data || {};
+      if (is_sharing) {
+        setScreenPresenter({
+          socketId: socket_id,
+          userId: user_id,
+          userName: user_name,
+        });
+      } else {
+        setScreenPresenter((prev) => (prev?.socketId === socket_id ? null : prev));
+      }
+    };
+
+    const handleMeetingForceStopScreenShare = () => {
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch (_) {}
+        });
+        screenStreamRef.current = null;
+      }
+      setIsScreenSharing(false);
+
+      // Restore camera if active
+      if (localStreamRef.current) {
+        const videoTracks = localStreamRef.current.getVideoTracks();
+        videoTracks.forEach((t) => localStreamRef.current?.removeTrack(t));
+        const cameraTrack = savedCameraTrackRef.current;
+        if (!isCameraOff && cameraTrack && cameraTrack.readyState === 'live') {
+          localStreamRef.current.addTrack(cameraTrack);
+          setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+          peerConnectionsRef.current.forEach((pc) => {
+            const transceivers = pc.getTransceivers();
+            const videoTransceiver = transceivers.find(
+              (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+            );
+            if (videoTransceiver && videoTransceiver.sender) {
+              videoTransceiver.sender.replaceTrack(cameraTrack).catch(() => {});
+              videoTransceiver.direction = 'sendrecv';
+            }
+          });
+        } else {
+          setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+          peerConnectionsRef.current.forEach((pc) => {
+            const transceivers = pc.getTransceivers();
+            const videoTransceiver = transceivers.find(
+              (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+            );
+            if (videoTransceiver && videoTransceiver.sender) {
+              videoTransceiver.sender.replaceTrack(null).catch(() => {});
+              videoTransceiver.direction = 'recvonly';
+            }
+          });
+        }
+      }
+      savedCameraTrackRef.current = null;
+      setScreenPresenter((prev) => (prev?.userId === user?.user_id ? null : prev));
+    };
+
+    const handleMeetingNewMessage = (data: InMeetingChatMessage) => {
+      setMeetingMessages((prev) => [...prev, data]);
+    };
+
+    const handleMeetingScreenShareLockUpdated = (data: any) => {
+      if (typeof data?.is_locked === 'boolean') {
+        setIsScreenShareLocked(data.is_locked);
+      }
+    };
+
     socket.on('meeting_joined_success', handleMeetingJoinedSuccess);
     socket.on('meeting_user_joined', handleMeetingUserJoined);
     socket.on('meeting_signal', handleMeetingSignal);
@@ -608,6 +734,10 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     socket.on('meeting_user_left', handleMeetingUserLeft);
     socket.on('meeting_forced_mute', handleMeetingForcedMute);
     socket.on('meeting_forced_unmute', handleMeetingForcedUnmute);
+    socket.on('meeting_screen_share_status', handleMeetingScreenShareStatus);
+    socket.on('meeting_screen_share_lock_updated', handleMeetingScreenShareLockUpdated);
+    socket.on('meeting_force_stop_screen_share', handleMeetingForceStopScreenShare);
+    socket.on('meeting_new_message', handleMeetingNewMessage);
     socket.on('meeting_removed', handleMeetingRemoved);
     socket.on('meeting_ended', handleMeetingEnded);
     socket.on('meeting_error', handleMeetingError);
@@ -620,6 +750,10 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       socket.off('meeting_user_left', handleMeetingUserLeft);
       socket.off('meeting_forced_mute', handleMeetingForcedMute);
       socket.off('meeting_forced_unmute', handleMeetingForcedUnmute);
+      socket.off('meeting_screen_share_status', handleMeetingScreenShareStatus);
+      socket.off('meeting_screen_share_lock_updated', handleMeetingScreenShareLockUpdated);
+      socket.off('meeting_force_stop_screen_share', handleMeetingForceStopScreenShare);
+      socket.off('meeting_new_message', handleMeetingNewMessage);
       socket.off('meeting_removed', handleMeetingRemoved);
       socket.off('meeting_ended', handleMeetingEnded);
       socket.off('meeting_error', handleMeetingError);
@@ -765,6 +899,192 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [isCameraOff]);
 
+  // Start Live Screen Share (Google Meet style with Mobile & Phone Fallbacks)
+  const startScreenShare = useCallback(async () => {
+    if (!meetingRef.current) return;
+
+    if (isScreenShareLocked && !isHost) {
+      alert('Screen sharing is currently disabled by the meeting host.');
+      return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      alert('Screen sharing is not supported in this browser or environment. Please use Google Chrome, Edge, or a modern mobile browser.');
+      return;
+    }
+
+    try {
+      let displayStream: MediaStream;
+      try {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 30, max: 60 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          } as any,
+          audio: false,
+        });
+      } catch (constraintErr: any) {
+        // Fallback for mobile phones / tablets with strict constraint parsers
+        console.warn('[ScreenShare] Ideal constraints failed, attempting basic mobile fallback:', constraintErr);
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
+      const screenVideoTrack = displayStream.getVideoTracks()[0];
+      if (!screenVideoTrack) return;
+
+      screenStreamRef.current = displayStream;
+      setIsScreenSharing(true);
+
+      // Save current camera track if any
+      if (localStreamRef.current) {
+        const existingVideoTrack = localStreamRef.current.getVideoTracks().find((t) => t.readyState === 'live');
+        if (existingVideoTrack) {
+          savedCameraTrackRef.current = existingVideoTrack;
+          localStreamRef.current.removeTrack(existingVideoTrack);
+        }
+        localStreamRef.current.addTrack(screenVideoTrack);
+        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+      } else {
+        localStreamRef.current = new MediaStream([screenVideoTrack]);
+        setLocalStream(new MediaStream([screenVideoTrack]));
+      }
+
+      // Replace video track in all peer connections
+      peerConnectionsRef.current.forEach((pc) => {
+        const transceivers = pc.getTransceivers();
+        let videoTransceiver = transceivers.find(
+          (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+        );
+        if (videoTransceiver && videoTransceiver.sender) {
+          videoTransceiver.sender.replaceTrack(screenVideoTrack).catch((err) => {
+            console.warn('[ScreenShare] replaceTrack error:', err);
+          });
+          videoTransceiver.direction = 'sendrecv';
+        }
+      });
+
+      // Handle browser's native "Stop Sharing" floating bar button
+      screenVideoTrack.onended = () => {
+        stopScreenShare();
+      };
+
+      emitMeetingScreenShareStatus({
+        meeting_code: meetingRef.current.meeting_code,
+        is_sharing: true,
+      });
+
+      if (user) {
+        setScreenPresenter({
+          socketId: mySocketId || 'local',
+          userId: user.user_id,
+          userName: user.name || 'You',
+        });
+      }
+    } catch (err: any) {
+      if (err.name !== 'NotAllowedError') {
+        console.error('Failed to start screen share:', err);
+      }
+    }
+  }, [isScreenShareLocked, isHost, mySocketId, user]);
+
+  // Stop Live Screen Share
+  const stopScreenShare = useCallback(() => {
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (_) {}
+      });
+      screenStreamRef.current = null;
+    }
+
+    setIsScreenSharing(false);
+
+    // Remove screen track from local stream
+    if (localStreamRef.current) {
+      const videoTracks = localStreamRef.current.getVideoTracks();
+      videoTracks.forEach((t) => {
+        localStreamRef.current?.removeTrack(t);
+      });
+
+      // Restore camera track if camera was active
+      const cameraTrack = savedCameraTrackRef.current;
+      if (!isCameraOff && cameraTrack && cameraTrack.readyState === 'live') {
+        localStreamRef.current.addTrack(cameraTrack);
+        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+
+        peerConnectionsRef.current.forEach((pc) => {
+          const transceivers = pc.getTransceivers();
+          const videoTransceiver = transceivers.find(
+            (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+          );
+          if (videoTransceiver && videoTransceiver.sender) {
+            videoTransceiver.sender.replaceTrack(cameraTrack).catch(() => {});
+            videoTransceiver.direction = 'sendrecv';
+          }
+        });
+      } else {
+        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+        peerConnectionsRef.current.forEach((pc) => {
+          const transceivers = pc.getTransceivers();
+          const videoTransceiver = transceivers.find(
+            (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+          );
+          if (videoTransceiver && videoTransceiver.sender) {
+            videoTransceiver.sender.replaceTrack(null).catch(() => {});
+            videoTransceiver.direction = 'recvonly';
+          }
+        });
+      }
+    }
+
+    savedCameraTrackRef.current = null;
+
+    if (meetingRef.current) {
+      emitMeetingScreenShareStatus({
+        meeting_code: meetingRef.current.meeting_code,
+        is_sharing: false,
+      });
+    }
+
+    setScreenPresenter((prev) => (prev?.userId === user?.user_id ? null : prev));
+  }, [isCameraOff, user]);
+
+  // Host: Toggle screen share lock for all participants
+  const toggleScreenShareLock = useCallback((locked: boolean) => {
+    if (meetingRef.current && isHost) {
+      setIsScreenShareLocked(locked);
+      emitMeetingToggleScreenShareLock({
+        meeting_code: meetingRef.current.meeting_code,
+        is_locked: locked,
+      });
+    }
+  }, [isHost]);
+
+  // Host: Stop participant screen share
+  const hostStopParticipantScreenShare = useCallback((targetSocketId: string) => {
+    if (meetingRef.current && isHost) {
+      emitMeetingStopScreenShare({
+        meeting_code: meetingRef.current.meeting_code,
+        target_socket_id: targetSocketId,
+      });
+    }
+  }, [isHost]);
+
+  // In-Meeting Chat: Send text message
+  const sendMeetingChatMessage = useCallback((text: string) => {
+    if (meetingRef.current && text.trim()) {
+      emitMeetingSendMessage({
+        meeting_code: meetingRef.current.meeting_code,
+        message: text.trim(),
+      });
+    }
+  }, []);
+
   // Leave meeting
   const leaveMeeting = useCallback(() => {
     if (meetingRef.current) {
@@ -844,6 +1164,10 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         participants,
         isMuted,
         isCameraOff,
+        isScreenSharing,
+        isScreenShareLocked,
+        screenPresenter,
+        meetingMessages,
         isHost,
         mySocketId,
         prepareMeeting,
@@ -852,6 +1176,11 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         endMeetingForEveryone,
         toggleMute,
         toggleCamera,
+        startScreenShare,
+        stopScreenShare,
+        toggleScreenShareLock,
+        hostStopParticipantScreenShare,
+        sendMeetingChatMessage,
         hostMuteParticipant,
         hostUnmuteParticipant,
         hostRemoveParticipant,
