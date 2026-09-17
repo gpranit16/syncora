@@ -218,30 +218,32 @@ erDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Caller as 👤 Alice (Caller)
-    participant Signaling as ⚡ Socket.io Server
-    actor Callee as 👤 Bob (Callee)
+    actor Caller as Alice (Caller)
+    participant Signaling as Socket.io Server
+    actor Callee as Bob (Callee)
 
-    Alice->>Signaling: call_user (offer, type: 'video', receiver: Bob)
-    Signaling->>Bob: incoming_call (caller: Alice, offer)
-    Bob->>Bob: Plays Ringtone & Displays Call Modal
-    Bob->>Signaling: answer_call (answer, caller: Alice)
-    Signaling->>Alice: call_accepted (answer)
+    Caller->>Signaling: call_user (offer, type: 'video', receiver: Bob)
+    Signaling->>Callee: incoming_call (caller: Alice, offer)
+    Callee->>Callee: Plays Ringtone & Displays Call Modal
+    Callee->>Signaling: answer_call (answer, caller: Alice)
+    Signaling->>Caller: call_accepted (answer)
     
     rect rgb(20, 20, 28)
-        note over Alice, Bob: Direct Peer-to-Peer (WebRTC) Media Stream Established
-        Alice<-->>Bob: ICE Candidates Exchange via Socket
-        Alice<-->>Bob: Real-Time Audio + HD Video Transmission (DTLS/SRTP)
+        note over Caller, Callee: Direct Peer-to-Peer (WebRTC) Media Stream Established
+        Caller->>Callee: ICE Candidate Exchange (via Socket)
+        Callee->>Caller: ICE Candidate Exchange (via Socket)
+        Caller->>Callee: Real-Time Audio + HD Video Stream (DTLS / SRTP)
+        Callee->>Caller: Real-Time Audio + HD Video Stream (DTLS / SRTP)
     end
 
     opt Screen Sharing Toggle
-        Alice->>Alice: capture getDisplayMedia()
-        Alice->>Bob: replaceTrack(videoTrack)
-        note over Alice, Bob: Instant Screen Broadcast without Disconnecting
+        Caller->>Caller: capture getDisplayMedia()
+        Caller->>Callee: replaceTrack(videoTrack)
+        note over Caller, Callee: Instant Screen Broadcast without Disconnecting
     end
 
-    Alice->>Signaling: end_call (call_duration)
-    Signaling->>Bob: call_ended
+    Caller->>Signaling: end_call (call_duration)
+    Signaling->>Callee: call_ended
     Signaling->>Signaling: Record Call History to Database
 ```
 
