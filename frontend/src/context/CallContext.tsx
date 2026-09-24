@@ -9,6 +9,9 @@ import {
   emitWebrtcSignal,
 } from '../socket/socketManager';
 
+import { soundManager } from '../utils/soundManager';
+import { browserNotification } from '../utils/browserNotification';
+
 export type CallType = 'voice' | 'video';
 export type CallState = 'idle' | 'calling' | 'ringing' | 'connecting' | 'connected' | 'reconnecting' | 'ended';
 
@@ -75,99 +78,9 @@ const RTC_CONFIG: RTCConfiguration = {
 
 const CallContext = createContext<CallContextType | undefined>(undefined);
 
-// ── Centralized, Idempotent Audio Synthesizer Engine ────────────────────────
-interface ToneEngineState {
-  audioCtx: AudioContext | null;
-  masterGain: GainNode | null;
-  intervalId: number | null;
-  scheduledTimeouts: number[];
-  activeOscillators: { osc: OscillatorNode; gain: GainNode }[];
-  currentMode: 'none' | 'ringback' | 'incoming' | 'ended';
-}
-
-const toneEngine: ToneEngineState = {
-  audioCtx: null,
-  masterGain: null,
-  intervalId: null,
-  scheduledTimeouts: [],
-  activeOscillators: [],
-  currentMode: 'none',
-};
-
-const getOrCreateAudioContext = (): { ctx: AudioContext; master: GainNode } | null => {
-  try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return null;
-
-    if (!toneEngine.audioCtx || toneEngine.audioCtx.state === 'closed') {
-      toneEngine.audioCtx = new AudioContextClass();
-    }
-    if (toneEngine.audioCtx.state === 'suspended') {
-      toneEngine.audioCtx.resume().catch(() => {});
-    }
-
-    if (!toneEngine.masterGain) {
-      toneEngine.masterGain = toneEngine.audioCtx.createGain();
-      toneEngine.masterGain.connect(toneEngine.audioCtx.destination);
-    }
-    toneEngine.masterGain.gain.setValueAtTime(1, toneEngine.audioCtx.currentTime);
-    return { ctx: toneEngine.audioCtx, master: toneEngine.masterGain };
-  } catch (e) {
-    console.warn('[ToneEngine] Could not initialize AudioContext:', e);
-    return null;
-  }
-};
-
 export const stopAllTones = () => {
-  toneEngine.currentMode = 'none';
-
-  // 1. Cancel recurring interval
-  if (toneEngine.intervalId !== null) {
-    clearInterval(toneEngine.intervalId);
-    window.clearInterval(toneEngine.intervalId);
-    toneEngine.intervalId = null;
-  }
-
-  // 2. Cancel all pending scheduled timeouts
-  while (toneEngine.scheduledTimeouts.length > 0) {
-    const tid = toneEngine.scheduledTimeouts.pop();
-    if (tid !== undefined) {
-      clearTimeout(tid);
-      window.clearTimeout(tid);
-    }
-  }
-
-  // 3. Immediately stop and disconnect all active oscillators and their gain nodes
-  while (toneEngine.activeOscillators.length > 0) {
-    const item = toneEngine.activeOscillators.pop();
-    if (item) {
-      try {
-        item.gain.gain.setValueAtTime(0, 0);
-        item.gain.disconnect();
-      } catch {}
-      try {
-        item.osc.stop(0);
-        item.osc.disconnect();
-      } catch {}
-    }
-  }
-
-  // 4. Mute and disconnect master gain
-  if (toneEngine.masterGain) {
-    try {
-      toneEngine.masterGain.gain.setValueAtTime(0, 0);
-      toneEngine.masterGain.disconnect();
-    } catch {}
-    toneEngine.masterGain = null;
-  }
-
-  // 5. Hard close AudioContext so no audio can linger in the hardware buffer
-  if (toneEngine.audioCtx && toneEngine.audioCtx.state !== 'closed') {
-    try {
-      toneEngine.audioCtx.close().catch(() => {});
-    } catch {}
-  }
-  toneEngine.audioCtx = null;
+  soundManager.stopAllTones();
+  browserNotification.stopTabFlashing();
 };
 
 export const terminateAudioContext = () => {
@@ -175,148 +88,24 @@ export const terminateAudioContext = () => {
 };
 
 const startRingbackTone = () => {
-  stopAllTones();
-  toneEngine.currentMode = 'ringback';
-  const audio = getOrCreateAudioContext();
-  if (!audio) return;
-  const { ctx, master } = audio;
-
-  const playBeep = () => {
-    if (toneEngine.currentMode !== 'ringback') return;
-    if (!toneEngine.audioCtx || toneEngine.audioCtx.state === 'closed') return;
-
-    try {
-      const now = ctx.currentTime;
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc1.frequency.setValueAtTime(440, now);
-      osc2.frequency.setValueAtTime(480, now);
-
-      gain.gain.setValueAtTime(0.04, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(master);
-
-      const oscEntry1 = { osc: osc1, gain };
-      const oscEntry2 = { osc: osc2, gain };
-      toneEngine.activeOscillators.push(oscEntry1, oscEntry2);
-
-      const cleanupOsc = () => {
-        toneEngine.activeOscillators = toneEngine.activeOscillators.filter(
-          (o) => o.osc !== osc1 && o.osc !== osc2
-        );
-        try {
-          osc1.disconnect();
-          osc2.disconnect();
-          gain.disconnect();
-        } catch {}
-      };
-
-      osc1.onended = cleanupOsc;
-
-      osc1.start(now);
-      osc2.start(now);
-      osc1.stop(now + 1.2);
-      osc2.stop(now + 1.2);
-    } catch {}
-  };
-
-  playBeep();
-  toneEngine.intervalId = window.setInterval(playBeep, 3500);
+  soundManager.startRingbackTone();
 };
 
-const startIncomingRingtone = () => {
-  stopAllTones();
-  toneEngine.currentMode = 'incoming';
-  const audio = getOrCreateAudioContext();
-  if (!audio) return;
-  const { ctx, master } = audio;
-
-  const playChime = () => {
-    if (toneEngine.currentMode !== 'incoming') return;
-    if (!toneEngine.audioCtx || toneEngine.audioCtx.state === 'closed') return;
-
-    try {
-      const baseNow = ctx.currentTime;
-      const notes = [
-        { delay: 0.0, freq: 659.25, dur: 0.35 },
-        { delay: 0.2, freq: 830.61, dur: 0.35 },
-        { delay: 0.4, freq: 987.77, dur: 0.45 },
-      ];
-
-      notes.forEach(({ delay, freq, dur }) => {
-        if (toneEngine.currentMode !== 'incoming') return;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-
-        osc.frequency.setValueAtTime(freq, baseNow + delay);
-        gain.gain.setValueAtTime(0.08, baseNow + delay);
-        gain.gain.exponentialRampToValueAtTime(0.001, baseNow + delay + dur);
-
-        osc.connect(gain);
-        gain.connect(master);
-
-        const oscEntry = { osc, gain };
-        toneEngine.activeOscillators.push(oscEntry);
-
-        osc.onended = () => {
-          toneEngine.activeOscillators = toneEngine.activeOscillators.filter((o) => o.osc !== osc);
-          try {
-            osc.disconnect();
-            gain.disconnect();
-          } catch {}
-        };
-
-        osc.start(baseNow + delay);
-        osc.stop(baseNow + delay + dur);
-      });
-    } catch {}
-  };
-
-  playChime();
-  toneEngine.intervalId = window.setInterval(playChime, 2200);
+const startIncomingRingtone = (callerName?: string, callType?: string) => {
+  soundManager.startIncomingCallRingtone();
+  if (callerName) {
+    browserNotification.flashTabTitle(`📞 Incoming Call: ${callerName}`);
+    browserNotification.showNotification({
+      title: `📞 Incoming ${callType === 'video' ? 'Video' : 'Voice'} Call`,
+      body: `${callerName} is calling you on Syncora...`,
+      tag: 'syncora-incoming-call',
+    });
+  }
 };
 
 const playEndCallTone = () => {
-  stopAllTones();
-  toneEngine.currentMode = 'ended';
-  const audio = getOrCreateAudioContext();
-  if (!audio) return;
-  const { ctx, master } = audio;
-
-  try {
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.frequency.setValueAtTime(480, now);
-    osc.frequency.exponentialRampToValueAtTime(240, now + 0.3);
-
-    gain.gain.setValueAtTime(0.06, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-
-    osc.connect(gain);
-    gain.connect(master);
-
-    const oscEntry = { osc, gain };
-    toneEngine.activeOscillators.push(oscEntry);
-
-    osc.onended = () => {
-      toneEngine.activeOscillators = toneEngine.activeOscillators.filter((o) => o.osc !== osc);
-      try {
-        osc.disconnect();
-        gain.disconnect();
-      } catch {}
-      stopAllTones();
-    };
-
-    osc.start(now);
-    osc.stop(now + 0.3);
-  } catch {}
+  soundManager.playCallEndedSound();
+  browserNotification.stopTabFlashing();
 };
 
 export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -608,7 +397,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsInitiator(false);
       setCallState('ringing');
       pendingOfferRef.current = data.offer || null;
-      startIncomingRingtone();
+      startIncomingRingtone(data.caller.name, data.call_type);
     };
 
     const handleCallRinging = (data: { call_id: string; receiver: CallParticipant; call_type: CallType }) => {

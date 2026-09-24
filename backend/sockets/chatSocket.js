@@ -212,7 +212,10 @@ const chatSocket = (io) => {
       );
 
       io.to(roomName).emit("receive_dm", messageData);
-      console.log(`Direct message sent to ${roomName}`);
+      if (messageData.receiver_id) {
+        io.to(`user_${messageData.receiver_id}`).emit("receive_dm", messageData);
+      }
+      console.log(`Direct message sent to ${roomName} and user_${messageData.receiver_id}`);
 
       if (messageData.receiver_id) {
         await emitUnreadUpdateForUser(messageData.receiver_id);

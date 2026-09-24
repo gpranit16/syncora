@@ -15,6 +15,7 @@ import CreateTaskFromMessageModal, { type SourceMessage } from '../CreateTaskFro
 import { applyReactionDelta } from '../../utils/reactions';
 import { formatMessageTimestamp } from '../../utils/date';
 import { getAvatarUrl } from '../../utils/avatar';
+import { soundManager } from '../../utils/soundManager';
 import './DmView.css';
 
 interface DmViewProps {
@@ -100,23 +101,8 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
   }, [selectedUser, user]);
 
   const playSound = (type: 'send') => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = 'sine';
-      
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1);
-      gain.gain.setValueAtTime(0.05, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-      
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.2);
-    } catch (e) {
-      console.log('Audio error', e);
+    if (type === 'send') {
+      soundManager.playSendSound();
     }
   };
 
@@ -132,6 +118,9 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
           if (prev.some((m) => m.direct_message_id === msg.direct_message_id)) return prev;
           return [...prev, msg];
         });
+        if (msg.sender_id !== user.user_id && msg.message_type !== 'call' && !msg.call_type) {
+          soundManager.playDmSound();
+        }
         emitMarkDmRead(selectedUser.user_id, user.user_id);
       }
     };
