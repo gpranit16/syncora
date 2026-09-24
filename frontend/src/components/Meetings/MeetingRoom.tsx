@@ -370,19 +370,30 @@ const PresentationStage: React.FC<{
 
   return (
     <div className="presentation-spotlight-box">
-      {hasVideoTrack ? (
-        <video
-          ref={setPresentationVideoNode}
-          autoPlay
-          playsInline
-          muted={isLocalPresenter}
-          className="presentation-video-element"
-        />
-      ) : (
+      {/* Video element ALWAYS mounted in DOM so WebRTC decoder stays active and displays immediately */}
+      <video
+        ref={setPresentationVideoNode}
+        autoPlay
+        playsInline
+        muted={isLocalPresenter}
+        onLoadedMetadata={(e) => {
+          (e.target as HTMLVideoElement).play().catch((err) => {
+            console.warn('[ScreenShare] Presentation video metadata play error:', err);
+          });
+        }}
+        className={`presentation-video-element ${hasVideoTrack ? 'active' : 'hidden'}`}
+        style={{
+          display: hasVideoTrack ? 'block' : 'none',
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+        }}
+      />
+      {!hasVideoTrack && (
         <div className="presentation-placeholder">
           <MonitorUp size={44} className="presentation-pulse-icon" />
           <h3>{isLocalPresenter ? 'You are sharing your screen' : `${presenterName} is sharing their screen`}</h3>
-          <p>Live display stream is active and broadcasting to everyone in the room.</p>
+          <p>Connecting to live display stream...</p>
         </div>
       )}
 
@@ -432,6 +443,8 @@ export const MeetingRoom: React.FC = () => {
     isScreenSharing,
     isScreenShareLocked,
     screenPresenter,
+    screenStream,
+    mySocketId,
     meetingMessages,
     isHost,
     toggleMute,
@@ -650,11 +663,19 @@ export const MeetingRoom: React.FC = () => {
   const participantsList = Array.from(participants.values());
   const totalCount = participantsList.length + 1; // +1 for local user
 
-  // Determine active presentation stream
-  const isLocalPresenter = isScreenSharing || (Boolean(screenPresenter && user && screenPresenter.userId === user.user_id));
+  // Determine if this client instance is the active presenter
+  const isLocalPresenter = isScreenSharing || Boolean(screenPresenter && mySocketId && screenPresenter.socketId === mySocketId);
+
+  // Determine presenter socket ID for remote stream lookup (match socketId first, then participant list if needed)
+  const presenterSocketId = screenPresenter
+    ? (screenPresenter.socketId && screenPresenter.socketId !== mySocketId
+        ? screenPresenter.socketId
+        : (participantsList.find((p) => p.userId === screenPresenter.userId && p.socketId !== mySocketId)?.socketId || screenPresenter.socketId))
+    : null;
+
   const activePresentationStream = isLocalPresenter
-    ? localStream
-    : (screenPresenter ? remoteStreams.get(screenPresenter.socketId) : null);
+    ? (screenStream || localStream)
+    : (presenterSocketId ? remoteStreams.get(presenterSocketId) : null);
 
   return (
     <div className="meeting-room-container">

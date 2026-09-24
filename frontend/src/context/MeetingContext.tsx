@@ -88,6 +88,7 @@ interface MeetingContextType {
   isCameraOff: boolean;
   isScreenSharing: boolean;
   isScreenShareLocked: boolean;
+  screenStream: MediaStream | null;
   screenPresenter: ScreenPresenter | null;
   meetingMessages: InMeetingChatMessage[];
   isHost: boolean;
@@ -127,6 +128,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [screenPresenter, setScreenPresenter] = useState<ScreenPresenter | null>(null);
   const [meetingMessages, setMeetingMessages] = useState<InMeetingChatMessage[]>([]);
   const [mySocketId, setMySocketId] = useState<string | null>(null);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
 
   const isHost = Boolean(
     meeting && user && (Number(meeting.host_id) === Number(user.user_id) || Number(meeting.host_user_id) === Number(user.user_id))
@@ -152,6 +154,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
       screenStreamRef.current = null;
     }
+    setScreenStream(null);
     savedCameraTrackRef.current = null;
     setIsScreenSharing(false);
     setScreenPresenter(null);
@@ -201,6 +204,69 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setMeetingStatus('error');
       setErrorMessage(err?.response?.data?.message || 'Failed to load meeting details');
       return false;
+    }
+  }, []);
+
+  // Helper to synchronize all active incoming remote tracks (audio + video/screen) from a peer connection
+  const syncRemoteTracksFromPeer = useCallback((targetSocketId: string, pc: RTCPeerConnection) => {
+    let streamAccumulator = remoteStreamMapRef.current.get(targetSocketId);
+    if (!streamAccumulator) {
+      streamAccumulator = new MediaStream();
+      remoteStreamMapRef.current.set(targetSocketId, streamAccumulator);
+    }
+
+    const receivers = pc.getReceivers();
+    receivers.forEach((receiver) => {
+      const track = receiver.track;
+      if (!track) return;
+
+      // Clean up ended or replaced tracks of the same kind
+      streamAccumulator!.getTracks().forEach((existingTrack) => {
+        if (existingTrack.kind === track.kind && (existingTrack.readyState === 'ended' || existingTrack.id !== track.id)) {
+          try {
+            streamAccumulator!.removeTrack(existingTrack);
+          } catch (_) {}
+        }
+      });
+
+      // Add track if not already in accumulator
+      if (!streamAccumulator!.getTracks().some((t) => t.id === track.id)) {
+        streamAccumulator!.addTrack(track);
+      }
+
+      // Attach lifecycle listeners to re-sync as soon as the track un-mutes, mutes, or ends
+      track.onunmute = () => {
+        console.log(`[WebRTC] Receiver track onunmute: ${track.kind} (${targetSocketId})`);
+        const curr = remoteStreamMapRef.current.get(targetSocketId);
+        if (curr) {
+          setRemoteStreams((prev) => new Map(prev).set(targetSocketId, new MediaStream(curr.getTracks())));
+        }
+      };
+      track.onmute = () => {
+        console.log(`[WebRTC] Receiver track onmute: ${track.kind} (${targetSocketId})`);
+        const curr = remoteStreamMapRef.current.get(targetSocketId);
+        if (curr) {
+          setRemoteStreams((prev) => new Map(prev).set(targetSocketId, new MediaStream(curr.getTracks())));
+        }
+      };
+      track.onended = () => {
+        console.log(`[WebRTC] Receiver track onended: ${track.kind} (${targetSocketId})`);
+        const curr = remoteStreamMapRef.current.get(targetSocketId);
+        if (curr) {
+          setRemoteStreams((prev) => new Map(prev).set(targetSocketId, new MediaStream(curr.getTracks())));
+        }
+      };
+    });
+
+    const currentStream = remoteStreamMapRef.current.get(targetSocketId);
+    if (currentStream) {
+      const fresh = new MediaStream(currentStream.getTracks());
+      console.log(`[WebRTC] Synced remote stream for ${targetSocketId}: [Audio: ${fresh.getAudioTracks().length}, Video: ${fresh.getVideoTracks().length}]`);
+      setRemoteStreams((prev) => {
+        const updated = new Map(prev);
+        updated.set(targetSocketId, fresh);
+        return updated;
+      });
     }
   }, []);
 
@@ -278,63 +344,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     // Handle remote tracks and accumulate in stream
     pc.ontrack = (event) => {
       console.log(`[WebRTC] ontrack received from ${remoteSocketId}: ${event.track.kind} (id: ${event.track.id})`, event.streams);
-
-      let streamAccumulator = remoteStreamMapRef.current.get(remoteSocketId);
-      if (!streamAccumulator) {
-        streamAccumulator = new MediaStream();
-        remoteStreamMapRef.current.set(remoteSocketId, streamAccumulator);
-      }
-
-      // Clean up ended or replaced tracks of the same kind
-      streamAccumulator.getTracks().forEach((t) => {
-        if (t.kind === event.track.kind && (t.readyState === 'ended' || t.id !== event.track.id)) {
-          try {
-            streamAccumulator!.removeTrack(t);
-          } catch (_) {}
-        }
-      });
-
-      // Add single track if not already in accumulator
-      if (!streamAccumulator.getTracks().some((t) => t.id === event.track.id)) {
-        streamAccumulator.addTrack(event.track);
-      }
-
-      // If stream was attached in event, also copy any additional tracks
-      if (event.streams && event.streams[0]) {
-        event.streams[0].getTracks().forEach((t) => {
-          if (!streamAccumulator!.getTracks().some((ex) => ex.id === t.id)) {
-            streamAccumulator!.addTrack(t);
-          }
-        });
-      }
-
-      const syncRemoteStreamState = () => {
-        const currentStream = remoteStreamMapRef.current.get(remoteSocketId);
-        if (currentStream) {
-          const fresh = new MediaStream(currentStream.getTracks());
-          console.log(`[WebRTC] Synced remote stream for ${remoteSocketId}: [Audio: ${fresh.getAudioTracks().length}, Video: ${fresh.getVideoTracks().length}]`);
-          setRemoteStreams((prev) => {
-            const updated = new Map(prev);
-            updated.set(remoteSocketId, fresh);
-            return updated;
-          });
-        }
-      };
-
-      syncRemoteStreamState();
-
-      event.track.onunmute = () => {
-        console.log(`[WebRTC] Track onunmute from ${remoteSocketId}: ${event.track.kind}`);
-        syncRemoteStreamState();
-      };
-      event.track.onmute = () => {
-        console.log(`[WebRTC] Track onmute from ${remoteSocketId}: ${event.track.kind}`);
-        syncRemoteStreamState();
-      };
-      event.track.onended = () => {
-        console.log(`[WebRTC] Track onended from ${remoteSocketId}: ${event.track.kind}`);
-        syncRemoteStreamState();
-      };
+      syncRemoteTracksFromPeer(remoteSocketId, pc);
     };
 
     pc.onconnectionstatechange = () => {
@@ -351,7 +361,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
 
     return pc;
-  }, []);
+  }, [syncRemoteTracksFromPeer]);
 
   // Join the meeting with media setup
   const joinMeeting = useCallback(async (initialMuted = false, initialCameraOff = false) => {
@@ -555,6 +565,9 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
               sdp: answer.sdp,
             },
           });
+
+          // Sync incoming remote tracks from this peer
+          syncRemoteTracksFromPeer(sender_socket_id, pc);
         } else if (signal.type === 'answer') {
           if (pc.signalingState === 'have-local-offer') {
             await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: signal.sdp }));
@@ -570,6 +583,9 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
           }
           candidateQueueRef.current.delete(sender_socket_id);
+
+          // Sync incoming remote tracks from this peer
+          syncRemoteTracksFromPeer(sender_socket_id, pc);
         } else if (signal.type === 'ice-candidate') {
           if (signal.candidate) {
             if (pc.remoteDescription && pc.remoteDescription.type) {
@@ -685,8 +701,14 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
           userId: user_id,
           userName: user_name,
         });
+        if (socket_id && peerConnectionsRef.current.has(socket_id)) {
+          syncRemoteTracksFromPeer(socket_id, peerConnectionsRef.current.get(socket_id)!);
+        }
       } else {
         setScreenPresenter((prev) => (prev?.socketId === socket_id ? null : prev));
+        if (socket_id && peerConnectionsRef.current.has(socket_id)) {
+          syncRemoteTracksFromPeer(socket_id, peerConnectionsRef.current.get(socket_id)!);
+        }
       }
     };
 
@@ -699,6 +721,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
         screenStreamRef.current = null;
       }
+      setScreenStream(null);
       setIsScreenSharing(false);
 
       // Restore camera if active
@@ -778,7 +801,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       socket.off('meeting_ended', handleMeetingEnded);
       socket.off('meeting_error', handleMeetingError);
     };
-  }, [createPeerConnection, cleanUpMediaAndPeers]);
+  }, [createPeerConnection, cleanUpMediaAndPeers, syncRemoteTracksFromPeer]);
 
   // Toggle local microphone
   const toggleMute = useCallback(async () => {
@@ -976,6 +999,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (!screenVideoTrack) return;
 
       screenStreamRef.current = displayStream;
+      setScreenStream(displayStream);
       setIsScreenSharing(true);
 
       // Save current camera track if any
@@ -1064,6 +1088,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     setIsScreenSharing(false);
+    setScreenStream(null);
 
     // Remove screen track from local stream
     let cameraTrackToRestore: MediaStreamTrack | null = null;
@@ -1236,6 +1261,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         isScreenSharing,
         isScreenShareLocked,
         screenPresenter,
+        screenStream,
         meetingMessages,
         isHost,
         mySocketId,
