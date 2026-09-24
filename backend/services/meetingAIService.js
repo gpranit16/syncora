@@ -1,18 +1,25 @@
 const { stripThinking } = require('../controllers/aiController');
 
+const getApiKey = () => {
+  const raw = process.env.OPENROUTER_API_KEY || process.env.NVIDIA_API_KEY || '';
+  return raw.trim().replace(/^["']|["']$/g, '').replace(/[\r\n\t]/g, '');
+};
+
 const getNvidiaApiUrl = () => {
   if (process.env.NVIDIA_API_URL) return process.env.NVIDIA_API_URL;
-  if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-')) {
+  const key = getApiKey();
+  if (key.startsWith('sk-or-') || process.env.OPENROUTER_API_KEY) {
     return 'https://openrouter.ai/api/v1';
   }
   return 'https://integrate.api.nvidia.com/v1';
 };
 
 const getCandidateModels = () => {
-  const isOR = process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-');
+  const key = getApiKey();
+  const isOR = key.startsWith('sk-or-') || Boolean(process.env.OPENROUTER_API_KEY);
   if (isOR) {
     const list = [
-      process.env.NVIDIA_MODEL,
+      process.env.NVIDIA_MODEL || process.env.OPENROUTER_MODEL,
       'meta-llama/llama-3.3-70b-instruct:free',
       'mistralai/mistral-small-24b-instruct-2501:free',
       'google/gemini-2.0-flash-exp:free',
@@ -379,8 +386,7 @@ const analyzeMeetingTranscript = async (transcriptText, targetLanguage = 'en', p
     };
   }
 
-  const rawKey = process.env.NVIDIA_API_KEY || '';
-  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/[\r\n\t]/g, '');
+  const apiKey = getApiKey();
 
   if (!apiKey) {
     console.warn('[Meeting AI] NVIDIA/OpenRouter API key not configured, using heuristic summary.');

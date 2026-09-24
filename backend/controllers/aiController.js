@@ -1,8 +1,14 @@
 const db = require('../config/db');
 
+const getApiKey = () => {
+  const raw = process.env.OPENROUTER_API_KEY || process.env.NVIDIA_API_KEY || '';
+  return raw.trim().replace(/^["']|["']$/g, '').replace(/[\r\n\t]/g, '');
+};
+
 const getNvidiaApiUrl = () => {
   if (process.env.NVIDIA_API_URL) return process.env.NVIDIA_API_URL;
-  if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-')) {
+  const key = getApiKey();
+  if (key.startsWith('sk-or-') || process.env.OPENROUTER_API_KEY) {
     return 'https://openrouter.ai/api/v1';
   }
   return 'https://integrate.api.nvidia.com/v1';
@@ -10,7 +16,9 @@ const getNvidiaApiUrl = () => {
 
 const getNvidiaModel = () => {
   if (process.env.NVIDIA_MODEL) return process.env.NVIDIA_MODEL;
-  if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-')) {
+  if (process.env.OPENROUTER_MODEL) return process.env.OPENROUTER_MODEL;
+  const key = getApiKey();
+  if (key.startsWith('sk-or-') || process.env.OPENROUTER_API_KEY) {
     return 'liquid/lfm-2.5-2.6b:free';
   }
   return 'nvidia/nemotron-3.5-lightning-30b-a3b';
@@ -103,11 +111,12 @@ const executeLLMCall = async (systemPrompt, userPrompt, userQuestion = '', optio
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
+      const apiKey = getApiKey();
       const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
+          'Authorization': `Bearer ${apiKey}`,
           'HTTP-Referer': 'https://syncora.app',
           'X-Title': 'Syncora'
         },
@@ -206,8 +215,8 @@ const askAI = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Question is required' });
     }
 
-    if (!process.env.NVIDIA_API_KEY) {
-      return res.status(500).json({ success: false, message: 'NVIDIA API key not configured' });
+    if (!getApiKey()) {
+      return res.status(500).json({ success: false, message: 'AI API key not configured' });
     }
 
     let messages = [];
@@ -305,8 +314,8 @@ const askTaskAI = async (req, res) => {
       return res.status(400).json({ success: false, message: 'workspace_id is required' });
     }
 
-    if (!process.env.NVIDIA_API_KEY) {
-      return res.status(500).json({ success: false, message: 'NVIDIA API key not configured' });
+    if (!getApiKey()) {
+      return res.status(500).json({ success: false, message: 'AI API key not configured' });
     }
 
     const tasks = await fetchTaskContext(workspace_id, userId);
