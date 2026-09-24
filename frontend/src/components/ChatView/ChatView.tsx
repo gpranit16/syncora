@@ -41,6 +41,7 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [showMembers, setShowMembers] = useState(false);
@@ -244,15 +245,26 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
   }, [channel.channel_id, user]);
 
   const handleSend = async () => {
-    if ((!input.trim() && !selectedFile) || !user) return;
+    if (isSending || (!input.trim() && !selectedFile) || !user) return;
     
+    const textToSend = input.trim();
+    const currentReplyTo = replyTo;
+    const currentFile = selectedFile;
+
+    setIsSending(true);
+    setInput('');
+    setReplyTo(null);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    emitStopTyping({ user_name: user.name, channel_id: channel.channel_id });
+
     let fileUrl = null;
     let fileName = null;
 
-    if (selectedFile) {
+    if (currentFile) {
       setIsUploading(true);
       try {
-        const { data: uploadData } = await uploadFile(selectedFile);
+        const { data: uploadData } = await uploadFile(currentFile);
         if (uploadData.success && uploadData.file) {
           const uploadBase = API_BASE || '';
           fileUrl = `${uploadBase}/uploads/${uploadData.file.filename}`;
@@ -268,8 +280,8 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
     try {
       const { data } = await sendMsgApi({
         channel_id: channel.channel_id,
-        message_text: input.trim(),
-        reply_to: replyTo?.message_id || null,
+        message_text: textToSend,
+        reply_to: currentReplyTo?.message_id || null,
         file_url: fileUrl,
         file_name: fileName
       });
@@ -278,21 +290,21 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
         channel_id: channel.channel_id,
         sender_id: user.user_id,
         sender_name: user.name,
-        message_text: input.trim(),
-        reply_to: replyTo?.message_id || null,
+        message_text: textToSend,
+        reply_to: currentReplyTo?.message_id || null,
         file_url: fileUrl,
         file_name: fileName,
-        created_at: new Date().toISOString(),
+        created_at: data.data.created_at || new Date().toISOString(),
       };
       emitSendMessage(msgData);
       playSound('send');
-      setInput('');
-      setReplyTo(null);
-      setSelectedFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      emitStopTyping({ user_name: user.name, channel_id: channel.channel_id });
     } catch (err) {
       console.error('Send failed:', err);
+      // Restore drafted message on failure
+      setInput(textToSend);
+      if (currentReplyTo) setReplyTo(currentReplyTo);
+    } finally {
+      setIsSending(false);
     }
   };
 

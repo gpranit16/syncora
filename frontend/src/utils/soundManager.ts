@@ -2,6 +2,7 @@
 // Syncora Web Audio API Sound Synthesizer Engine
 // Provides zero-latency, cross-browser synthesised sounds for messages,
 // calls, tasks, meetings, and notifications without requiring external audio files.
+// Includes active-cancellation and event debouncing to eliminate duplicate sounds.
 // ============================================================================
 
 class SoundManager {
@@ -12,6 +13,8 @@ class SoundManager {
   private ringbackOscillators: { osc: OscillatorNode; gain: GainNode }[] = [];
   private isMuted: boolean = false;
   private isUnlocked: boolean = false;
+  private isRingtoneActive: boolean = false;
+  private lastSoundTimestamps: Map<string, number> = new Map();
 
   constructor() {
     // Check localStorage preference
@@ -65,6 +68,16 @@ class SoundManager {
     }
   }
 
+  private shouldDebounce(soundKey: string, cooldownMs = 280): boolean {
+    const now = Date.now();
+    const last = this.lastSoundTimestamps.get(soundKey) || 0;
+    if (now - last < cooldownMs) {
+      return true;
+    }
+    this.lastSoundTimestamps.set(soundKey, now);
+    return false;
+  }
+
   public getMuted(): boolean {
     return this.isMuted;
   }
@@ -88,7 +101,7 @@ class SoundManager {
   // 1. Channel Message Sound (Soft dual-tone Slack/Discord style)
   // --------------------------------------------------------------------------
   public playMessageSound() {
-    if (this.isMuted) return;
+    if (this.isMuted || this.shouldDebounce('msg_sound', 280)) return;
     const ctx = this.initAudioContext();
     if (!ctx) return;
 
@@ -129,7 +142,7 @@ class SoundManager {
   // 2. Direct Message (DM) Sound (Lively crystal pop chime)
   // --------------------------------------------------------------------------
   public playDmSound() {
-    if (this.isMuted) return;
+    if (this.isMuted || this.shouldDebounce('dm_sound', 280)) return;
     const ctx = this.initAudioContext();
     if (!ctx) return;
 
@@ -170,7 +183,7 @@ class SoundManager {
   // 3. Task Assigned / Updated Sound (Ascending tri-tone chime C5-E5-G5)
   // --------------------------------------------------------------------------
   public playTaskSound() {
-    if (this.isMuted) return;
+    if (this.isMuted || this.shouldDebounce('task_sound', 300)) return;
     const ctx = this.initAudioContext();
     if (!ctx) return;
 
@@ -204,7 +217,7 @@ class SoundManager {
   // 4. Meeting Started / Meeting Invite Sound (Resonant double-chime)
   // --------------------------------------------------------------------------
   public playMeetingSound() {
-    if (this.isMuted) return;
+    if (this.isMuted || this.shouldDebounce('meeting_sound', 300)) return;
     const ctx = this.initAudioContext();
     if (!ctx) return;
 
@@ -237,7 +250,7 @@ class SoundManager {
   // 5. General Notification Sound (Crisp bell chime)
   // --------------------------------------------------------------------------
   public playNotificationSound() {
-    if (this.isMuted) return;
+    if (this.isMuted || this.shouldDebounce('notif_sound', 300)) return;
     const ctx = this.initAudioContext();
     if (!ctx) return;
 
@@ -264,7 +277,7 @@ class SoundManager {
   // 6. Message Sent Tactile Pop Sound
   // --------------------------------------------------------------------------
   public playSendSound() {
-    if (this.isMuted) return;
+    if (this.isMuted || this.shouldDebounce('send_sound', 120)) return;
     const ctx = this.initAudioContext();
     if (!ctx) return;
 
@@ -294,12 +307,13 @@ class SoundManager {
     if (this.isMuted) return;
     this.stopIncomingCallRingtone();
     this.stopRingbackTone();
+    this.isRingtoneActive = true;
 
     const ctx = this.initAudioContext();
     if (!ctx) return;
 
     const playMelody = () => {
-      if (this.isMuted || !this.audioCtx || this.audioCtx.state === 'closed') return;
+      if (!this.isRingtoneActive || this.isMuted || !this.audioCtx || this.audioCtx.state === 'closed') return;
 
       try {
         const baseNow = this.audioCtx.currentTime;
@@ -316,7 +330,7 @@ class SoundManager {
         ];
 
         notes.forEach(({ delay, freq, dur, vol }) => {
-          if (!this.audioCtx) return;
+          if (!this.isRingtoneActive || !this.audioCtx) return;
           const osc = this.audioCtx.createOscillator();
           const gain = this.audioCtx.createGain();
           osc.type = 'sine';
@@ -351,6 +365,7 @@ class SoundManager {
   }
 
   public stopIncomingCallRingtone() {
+    this.isRingtoneActive = false;
     if (this.ringtoneInterval !== null) {
       clearInterval(this.ringtoneInterval);
       window.clearInterval(this.ringtoneInterval);
@@ -361,6 +376,7 @@ class SoundManager {
       const item = this.ringtoneOscillators.pop();
       if (item) {
         try {
+          item.gain.gain.cancelScheduledValues(0);
           item.gain.gain.setValueAtTime(0, 0);
           item.gain.disconnect();
         } catch {}
@@ -440,6 +456,7 @@ class SoundManager {
       const item = this.ringbackOscillators.pop();
       if (item) {
         try {
+          item.gain.gain.cancelScheduledValues(0);
           item.gain.gain.setValueAtTime(0, 0);
           item.gain.disconnect();
         } catch {}

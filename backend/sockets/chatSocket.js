@@ -211,11 +211,13 @@ const chatSocket = (io) => {
         messageData.receiver_id
       );
 
-      io.to(roomName).emit("receive_dm", messageData);
+      // Chaining .to(roomA).to(roomB) ensures Socket.IO deduplicates sockets in both rooms
       if (messageData.receiver_id) {
-        io.to(`user_${messageData.receiver_id}`).emit("receive_dm", messageData);
+        io.to(roomName).to(`user_${messageData.receiver_id}`).emit("receive_dm", messageData);
+      } else {
+        io.to(roomName).emit("receive_dm", messageData);
       }
-      console.log(`Direct message sent to ${roomName} and user_${messageData.receiver_id}`);
+      console.log(`Direct message sent to ${roomName}`);
 
       if (messageData.receiver_id) {
         await emitUnreadUpdateForUser(messageData.receiver_id);

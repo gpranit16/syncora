@@ -56,6 +56,7 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
   const [replyTo, setReplyTo] = useState<DirectMessage | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showPinned, setShowPinned] = useState(false);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -405,15 +406,30 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
   };
 
   const handleSend = async () => {
-    if ((!input.trim() && !selectedFile) || !user || !selectedUser) return;
+    if (isSending || (!input.trim() && !selectedFile) || !user || !selectedUser) return;
     
+    const textToSend = input.trim();
+    const currentReplyTo = replyTo;
+    const currentFile = selectedFile;
+
+    setIsSending(true);
+    setInput('');
+    setReplyTo(null);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    emitStopTyping({
+      user_name: user.name,
+      sender_id: user.user_id,
+      receiver_id: selectedUser.user_id,
+    });
+
     let fileUrl = null;
     let fileName = null;
 
-    if (selectedFile) {
+    if (currentFile) {
       setIsUploading(true);
       try {
-        const { data } = await uploadFile(selectedFile);
+        const { data } = await uploadFile(currentFile);
         if (data.success && data.file) {
           const uploadBase = API_BASE || '';
           fileUrl = `${uploadBase}/uploads/${data.file.filename}`;
@@ -429,11 +445,11 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
     try {
       const payload: any = { 
         receiver_id: selectedUser.user_id, 
-        message_text: input.trim(),
+        message_text: textToSend,
         file_url: fileUrl,
         file_name: fileName
       };
-      if (replyTo) payload.reply_to = replyTo.direct_message_id;
+      if (currentReplyTo) payload.reply_to = currentReplyTo.direct_message_id;
       
       const { data } = await sendDirectMessage(payload);
       emitSendDm({
@@ -441,24 +457,20 @@ const DmView: React.FC<DmViewProps> = ({ initialTargetUser, onTargetChange }) =>
         sender_id: user.user_id,
         receiver_id: selectedUser.user_id,
         sender_name: user.name,
-        message_text: input.trim(),
+        message_text: textToSend,
         file_url: fileUrl,
         file_name: fileName,
-        reply_to: replyTo ? replyTo.direct_message_id : null,
-        created_at: new Date().toISOString(),
+        reply_to: currentReplyTo ? currentReplyTo.direct_message_id : null,
+        created_at: data.data.created_at || new Date().toISOString(),
       });
       playSound('send');
-      setInput('');
-      setReplyTo(null);
-      setSelectedFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      emitStopTyping({
-        user_name: user.name,
-        sender_id: user.user_id,
-        receiver_id: selectedUser.user_id
-      });
     } catch (err) {
       console.error('Send DM failed:', err);
+      // Restore drafted message on failure
+      setInput(textToSend);
+      if (currentReplyTo) setReplyTo(currentReplyTo);
+    } finally {
+      setIsSending(false);
     }
   };
 
