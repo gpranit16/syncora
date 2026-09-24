@@ -291,14 +291,14 @@ export const ActiveCallModal: React.FC = () => {
                     <span className="transcript-status-subtext">
                       {transcriptionStatus === 'active' && (
                         <span className="status-badge-active">
-                          <span className="status-live-dot" /> Live · Deepgram Nova-3
+                          <span className="status-live-dot" /> Live Transcription
                         </span>
                       )}
-                      {transcriptionStatus === 'connecting' && 'Connecting to Deepgram...'}
+                      {transcriptionStatus === 'connecting' && 'Connecting to transcription...'}
                       {transcriptionStatus === 'muted' && 'Transcription paused (mic muted)'}
                       {transcriptionStatus === 'error' && (
                         <span className="status-badge-error">
-                          <AlertCircle size={11} /> Service unavailable
+                          <AlertCircle size={11} /> Microphone access needed
                         </span>
                       )}
                       {transcriptionStatus === 'idle' && 'Waiting for audio...'}

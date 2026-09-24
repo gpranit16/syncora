@@ -1011,14 +1011,14 @@ export const MeetingRoom: React.FC = () => {
                     {transcriptionStatus === 'active' && (
                       <span style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse 1.5s infinite' }} />
-                        Live · Deepgram Nova-3
+                        Live Transcription
                       </span>
                     )}
                     {transcriptionStatus === 'connecting' && 'Connecting to transcription...'}
                     {transcriptionStatus === 'muted' && 'Transcription paused (muted)'}
                     {transcriptionStatus === 'error' && (
                       <span style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <AlertCircle size={12} /> Transcription unavailable
+                        <AlertCircle size={12} /> Microphone access needed
                       </span>
                     )}
                     {transcriptionStatus === 'idle' && 'Waiting to start...'}
@@ -1035,7 +1035,7 @@ export const MeetingRoom: React.FC = () => {
                 <div className="chat-empty-state">
                   <FileText size={32} className="chat-empty-icon" />
                   <p className="chat-empty-text">No transcript yet</p>
-                  <span>Speak to start live transcription powered by Deepgram Nova-3.</span>
+                  <span>Speak to start live transcription.</span>
                 </div>
               ) : (
                 <>

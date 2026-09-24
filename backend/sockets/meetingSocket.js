@@ -624,7 +624,27 @@ const meetingSocket = (io, socket, onlineUsers) => {
     await stopDeepgramSession(socket.id);
   });
 
-  // ── Legacy browser SpeechRecognition transcript chunk handler (kept for backwards compat) ──
+  // Client streams call transcript chunk (for 1-on-1 direct calls)
+  socket.on("call_transcript_chunk", (data) => {
+    try {
+      const { call_id, text, user_id, user_name, timestamp } = data || {};
+      if (!call_id || !text || !text.trim()) return;
+      const payload = {
+        callId: call_id,
+        speakerId: user_id ? Number(user_id) : null,
+        speakerName: user_name || "Speaker",
+        text: text.trim(),
+        isFinal: true,
+        timestamp: timestamp || new Date().toISOString(),
+      };
+      io.to(`call_${call_id}`).emit("call_transcript_live", payload);
+      io.to(`call_${call_id}`).emit("transcript_live", payload);
+    } catch (err) {
+      console.error("[CallTranscript] Chunk error:", err.message);
+    }
+  });
+
+  // ── Browser SpeechRecognition transcript chunk handler (fallback) ──
   socket.on("meeting_transcript_chunk", async (data) => {
     try {
       const { meeting_code, text, user_id, user_name, timestamp, language } = data || {};

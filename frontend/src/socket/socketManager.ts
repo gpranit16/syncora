@@ -312,6 +312,16 @@ export const emitMeetingTranscriptChunk = (data: {
   getSocket().emit('meeting_transcript_chunk', data);
 };
 
+export const emitCallTranscriptChunk = (data: {
+  call_id: string;
+  text: string;
+  user_id?: number;
+  user_name?: string;
+  timestamp?: string;
+}) => {
+  getSocket().emit('call_transcript_chunk', data);
+};
+
 export const emitMeetingScreenShareStatus = (data: {
   meeting_code: string;
   is_sharing: boolean;
