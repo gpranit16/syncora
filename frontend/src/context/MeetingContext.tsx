@@ -285,6 +285,15 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         remoteStreamMapRef.current.set(remoteSocketId, streamAccumulator);
       }
 
+      // Clean up ended or replaced tracks of the same kind
+      streamAccumulator.getTracks().forEach((t) => {
+        if (t.kind === event.track.kind && (t.readyState === 'ended' || t.id !== event.track.id)) {
+          try {
+            streamAccumulator!.removeTrack(t);
+          } catch (_) {}
+        }
+      });
+
       // Add single track if not already in accumulator
       if (!streamAccumulator.getTracks().some((t) => t.id === event.track.id)) {
         streamAccumulator.addTrack(event.track);
@@ -486,12 +495,22 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       try {
         if (signal.type === 'offer') {
-          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
+          // If we receive an offer while not in stable state, rollback to avoid glare collision
+          if (pc.signalingState !== 'stable') {
+            await Promise.all([
+              pc.setLocalDescription({ type: 'rollback' }).catch(() => {}),
+              pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp })),
+            ]);
+          } else {
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
+          }
 
           // Ensure local tracks are attached to the matching transceivers after setting remote offer
           const activeStream = localStreamRef.current;
           const audioTrack = activeStream?.getAudioTracks()[0];
-          const videoTrack = activeStream?.getVideoTracks()[0];
+          const screenTrack = screenStreamRef.current?.getVideoTracks().find((t) => t.readyState === 'live');
+          const cameraTrack = !isCameraOff ? activeStream?.getVideoTracks().find((t) => t.readyState === 'live') : null;
+          const localVideoTrack = screenTrack || cameraTrack;
           const transceivers = pc.getTransceivers();
 
           const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'audio' || t.sender?.track?.kind === 'audio');
@@ -506,9 +525,8 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
           const videoTransceiver = transceivers.find((t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
           if (videoTransceiver) {
-            if (videoTrack && videoTransceiver.sender) {
-              await videoTransceiver.sender.replaceTrack(videoTrack);
-              // CRITICAL: Answerer with live camera MUST set sendrecv to force sending video to offerer!
+            if (localVideoTrack && videoTransceiver.sender) {
+              await videoTransceiver.sender.replaceTrack(localVideoTrack);
               videoTransceiver.direction = 'sendrecv';
             } else {
               videoTransceiver.direction = 'recvonly';
@@ -538,7 +556,9 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             },
           });
         } else if (signal.type === 'answer') {
-          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: signal.sdp }));
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: signal.sdp }));
+          }
 
           // Process queued ICE candidates safely
           const queued = candidateQueueRef.current.get(sender_socket_id) || [];
@@ -872,17 +892,36 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
             });
             localStreamRef.current.addTrack(newVideoTrack);
 
-            // Add or replace in all peer connections
-            peerConnectionsRef.current.forEach((pc) => {
-              const transceivers = pc.getTransceivers();
-              const videoTransceiver = transceivers.find(
-                (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
-              );
-              if (videoTransceiver && videoTransceiver.sender) {
-                videoTransceiver.sender.replaceTrack(newVideoTrack).catch(() => {});
-                videoTransceiver.direction = 'sendrecv';
+            // Add or replace in all peer connections and renegotiate
+            for (const [remoteSocketId, pc] of peerConnectionsRef.current.entries()) {
+              try {
+                const transceivers = pc.getTransceivers();
+                let videoTransceiver = transceivers.find(
+                  (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+                );
+                if (videoTransceiver && videoTransceiver.sender) {
+                  await videoTransceiver.sender.replaceTrack(newVideoTrack);
+                  videoTransceiver.direction = 'sendrecv';
+                } else {
+                  videoTransceiver = pc.addTransceiver(newVideoTrack, {
+                    direction: 'sendrecv',
+                    streams: [localStreamRef.current!],
+                  });
+                }
+
+                if (pc.signalingState !== 'closed') {
+                  const offer = await pc.createOffer();
+                  await pc.setLocalDescription(offer);
+                  emitMeetingSignal({
+                    meeting_code: meetingRef.current?.meeting_code || '',
+                    target_socket_id: remoteSocketId,
+                    signal: { type: 'offer', sdp: offer.sdp },
+                  });
+                }
+              } catch (camErr) {
+                console.warn(`[WebRTC] Camera enable renegotiation error for ${remoteSocketId}:`, camErr);
               }
-            });
+            }
 
             setIsCameraOff(false);
             setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
@@ -953,19 +992,41 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setLocalStream(new MediaStream([screenVideoTrack]));
       }
 
-      // Replace video track in all peer connections
-      peerConnectionsRef.current.forEach((pc) => {
-        const transceivers = pc.getTransceivers();
-        let videoTransceiver = transceivers.find(
-          (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
-        );
-        if (videoTransceiver && videoTransceiver.sender) {
-          videoTransceiver.sender.replaceTrack(screenVideoTrack).catch((err) => {
-            console.warn('[ScreenShare] replaceTrack error:', err);
-          });
-          videoTransceiver.direction = 'sendrecv';
+      // Replace video track in all peer connections and renegotiate so all peers receive the live screen
+      for (const [remoteSocketId, pc] of peerConnectionsRef.current.entries()) {
+        try {
+          const transceivers = pc.getTransceivers();
+          let videoTransceiver = transceivers.find(
+            (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+          );
+
+          if (videoTransceiver && videoTransceiver.sender) {
+            await videoTransceiver.sender.replaceTrack(screenVideoTrack);
+            videoTransceiver.direction = 'sendrecv';
+          } else {
+            videoTransceiver = pc.addTransceiver(screenVideoTrack, {
+              direction: 'sendrecv',
+              streams: [localStreamRef.current!],
+            });
+          }
+
+          if (pc.signalingState !== 'closed') {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            emitMeetingSignal({
+              meeting_code: meetingRef.current?.meeting_code || '',
+              target_socket_id: remoteSocketId,
+              signal: {
+                type: 'offer',
+                sdp: offer.sdp,
+              },
+            });
+            console.log(`[ScreenShare] Renegotiation offer sent to ${remoteSocketId}`);
+          }
+        } catch (shareErr) {
+          console.warn(`[ScreenShare] Failed to send screen offer to ${remoteSocketId}:`, shareErr);
         }
-      });
+      }
 
       // Handle browser's native "Stop Sharing" floating bar button
       screenVideoTrack.onended = () => {
@@ -992,7 +1053,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [isScreenShareLocked, isHost, mySocketId, user]);
 
   // Stop Live Screen Share
-  const stopScreenShare = useCallback(() => {
+  const stopScreenShare = useCallback(async () => {
     if (screenStreamRef.current) {
       screenStreamRef.current.getTracks().forEach((track) => {
         try {
@@ -1005,6 +1066,7 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setIsScreenSharing(false);
 
     // Remove screen track from local stream
+    let cameraTrackToRestore: MediaStreamTrack | null = null;
     if (localStreamRef.current) {
       const videoTracks = localStreamRef.current.getVideoTracks();
       videoTracks.forEach((t) => {
@@ -1014,35 +1076,42 @@ export const MeetingProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // Restore camera track if camera was active
       const cameraTrack = savedCameraTrackRef.current;
       if (!isCameraOff && cameraTrack && cameraTrack.readyState === 'live') {
+        cameraTrackToRestore = cameraTrack;
         localStreamRef.current.addTrack(cameraTrack);
-        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-
-        peerConnectionsRef.current.forEach((pc) => {
-          const transceivers = pc.getTransceivers();
-          const videoTransceiver = transceivers.find(
-            (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
-          );
-          if (videoTransceiver && videoTransceiver.sender) {
-            videoTransceiver.sender.replaceTrack(cameraTrack).catch(() => {});
-            videoTransceiver.direction = 'sendrecv';
-          }
-        });
-      } else {
-        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-        peerConnectionsRef.current.forEach((pc) => {
-          const transceivers = pc.getTransceivers();
-          const videoTransceiver = transceivers.find(
-            (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
-          );
-          if (videoTransceiver && videoTransceiver.sender) {
-            videoTransceiver.sender.replaceTrack(null).catch(() => {});
-            videoTransceiver.direction = 'recvonly';
-          }
-        });
       }
+      setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
     }
 
     savedCameraTrackRef.current = null;
+
+    // Renegotiate with peers so remote sides revert to camera or stop receiving video
+    for (const [remoteSocketId, pc] of peerConnectionsRef.current.entries()) {
+      try {
+        const transceivers = pc.getTransceivers();
+        const videoTransceiver = transceivers.find(
+          (t) => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video'
+        );
+        if (videoTransceiver && videoTransceiver.sender) {
+          await videoTransceiver.sender.replaceTrack(cameraTrackToRestore);
+          videoTransceiver.direction = cameraTrackToRestore ? 'sendrecv' : 'recvonly';
+        }
+
+        if (pc.signalingState !== 'closed') {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          emitMeetingSignal({
+            meeting_code: meetingRef.current?.meeting_code || '',
+            target_socket_id: remoteSocketId,
+            signal: {
+              type: 'offer',
+              sdp: offer.sdp,
+            },
+          });
+        }
+      } catch (stopErr) {
+        console.warn(`[ScreenShare] Stop screen share renegotiation error for ${remoteSocketId}:`, stopErr);
+      }
+    }
 
     if (meetingRef.current) {
       emitMeetingScreenShareStatus({

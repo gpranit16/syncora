@@ -310,10 +310,55 @@ const PresentationStage: React.FC<{
   onHostStopSharing,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [, setTrackVersion] = useState(0);
+
+  // Listen to track events on stream so adding/removing/unmuting video updates UI immediately
+  useEffect(() => {
+    if (!stream) return;
+    const handleTrackUpdate = () => {
+      setTrackVersion((v) => v + 1);
+    };
+    stream.addEventListener('addtrack', handleTrackUpdate);
+    stream.addEventListener('removetrack', handleTrackUpdate);
+    stream.getVideoTracks().forEach((track) => {
+      track.addEventListener('unmute', handleTrackUpdate);
+      track.addEventListener('mute', handleTrackUpdate);
+      track.addEventListener('ended', handleTrackUpdate);
+    });
+
+    return () => {
+      stream.removeEventListener('addtrack', handleTrackUpdate);
+      stream.removeEventListener('removetrack', handleTrackUpdate);
+      stream.getVideoTracks().forEach((track) => {
+        track.removeEventListener('unmute', handleTrackUpdate);
+        track.removeEventListener('mute', handleTrackUpdate);
+        track.removeEventListener('ended', handleTrackUpdate);
+      });
+    };
+  }, [stream]);
+
+  const liveVideoTracks = stream ? stream.getVideoTracks().filter((t) => t.readyState === 'live') : [];
+  const hasVideoTrack = liveVideoTracks.length > 0;
+
+  // Callback ref ensures video element is assigned srcObject as soon as it mounts into DOM
+  const setPresentationVideoNode = useCallback(
+    (node: HTMLVideoElement | null) => {
+      videoRef.current = node;
+      if (node && stream) {
+        if (node.srcObject !== stream) {
+          node.srcObject = stream;
+        }
+        node.play().catch((err) => {
+          console.warn('[ScreenShare] Presentation video play error:', err);
+        });
+      }
+    },
+    [stream]
+  );
 
   useEffect(() => {
     const videoEl = videoRef.current;
-    if (videoEl && stream) {
+    if (videoEl && stream && hasVideoTrack) {
       if (videoEl.srcObject !== stream) {
         videoEl.srcObject = stream;
       }
@@ -321,19 +366,13 @@ const PresentationStage: React.FC<{
         console.warn('[ScreenShare] Presentation video play error:', err);
       });
     }
-  }, [stream]);
-
-  const hasVideoTrack = Boolean(
-    stream &&
-    stream.getVideoTracks().length > 0 &&
-    stream.getVideoTracks().some((t) => t.readyState === 'live')
-  );
+  }, [stream, hasVideoTrack]);
 
   return (
     <div className="presentation-spotlight-box">
       {hasVideoTrack ? (
         <video
-          ref={videoRef}
+          ref={setPresentationVideoNode}
           autoPlay
           playsInline
           muted={isLocalPresenter}
