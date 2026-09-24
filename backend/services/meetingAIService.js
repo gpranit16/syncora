@@ -8,12 +8,23 @@ const getNvidiaApiUrl = () => {
   return 'https://integrate.api.nvidia.com/v1';
 };
 
-const getNvidiaModel = () => {
-  if (process.env.NVIDIA_MODEL) return process.env.NVIDIA_MODEL;
-  if (process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-')) {
-    return 'nvidia/nemotron-3.5-lightning:free';
+const getCandidateModels = () => {
+  const isOR = process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('sk-or-');
+  if (isOR) {
+    const list = [
+      process.env.NVIDIA_MODEL,
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'mistralai/mistral-small-24b-instruct-2501:free',
+      'google/gemini-2.0-flash-exp:free',
+      'liquid/lfm-2.5-2.6b:free',
+      'nvidia/nemotron-3.5-lightning:free'
+    ].filter(Boolean);
+    return [...new Set(list)];
   }
-  return 'nvidia/nemotron-3.5-lightning-30b-a3b';
+  return [
+    process.env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    'meta/llama-3.3-70b-instruct'
+  ];
 };
 
 /**
@@ -21,7 +32,6 @@ const getNvidiaModel = () => {
  */
 const isTrivialTranscript = (transcriptText) => {
   if (!transcriptText || typeof transcriptText !== 'string') return true;
-  // Strip speaker labels like "Name: " or "[Name]: " or timestamps
   const stripped = transcriptText
     .replace(/^\[?[^:\]\n]+\]?:\s*/gm, '')
     .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/g, '')
@@ -47,24 +57,65 @@ const isTrivialTranscript = (transcriptText) => {
 };
 
 /**
- * Checks if a string looks like AI chain-of-thought or internal reasoning commentary.
+ * Safely strips XML thinking tags without destroying subsequent content.
  */
-const isReasoningText = (text) => {
-  if (!text || typeof text !== 'string') return false;
-  const lower = text.toLowerCase();
-  return (
-    lower.includes('i need to make sure') ||
-    lower.includes('rule ') ||
-    lower.includes('json is valid') ||
-    lower.includes("i'll output []") ||
-    lower.includes('i will output []') ||
-    lower.includes('schema') ||
-    lower.includes('action_items') ||
-    lower.includes('top-level') ||
-    lower.includes('check constraints') ||
-    lower.includes('draft the summary') ||
-    /^(?:-\s*)?I (?:need to|must|should|will) (?:make sure|analyze|check|output|ensure|follow)/i.test(text.trim())
-  );
+const stripThinkingTags = (text) => {
+  if (!text || typeof text !== 'string') return '';
+  let s = text;
+  s = s.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  s = s.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
+  s = s.replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '');
+  // Strip markdown fences
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
+  return s.trim();
+};
+
+/**
+ * Robust JSON extraction and repair.
+ */
+const parseAndRepairJSON = (rawText) => {
+  if (!rawText || typeof rawText !== 'string') return null;
+  const cleaned = stripThinkingTags(rawText);
+
+  // 1. Direct parse attempt
+  try {
+    const res = JSON.parse(cleaned);
+    if (res && typeof res === 'object') return res;
+  } catch (_) {}
+
+  // 2. Extract outermost JSON block {...}
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    let jsonStr = cleaned.slice(firstBrace, lastBrace + 1);
+
+    try {
+      const res = JSON.parse(jsonStr);
+      if (res && typeof res === 'object') return res;
+    } catch (_) {}
+
+    // Fix trailing commas
+    let repaired = jsonStr.replace(/,\s*([}\]])/g, '$1');
+    try {
+      const res = JSON.parse(repaired);
+      if (res && typeof res === 'object') return res;
+    } catch (_) {}
+
+    // Fix unescaped newlines inside strings
+    repaired = repaired.replace(/(?<=:\s*"[^"]*)\r?\n(?=[^"]*")/g, '\\n');
+    try {
+      const res = JSON.parse(repaired);
+      if (res && typeof res === 'object') return res;
+    } catch (_) {}
+  }
+
+  // 3. Fallback regex field-by-field extraction
+  const extracted = extractStructuredKeys(cleaned);
+  if (extracted.summary || extracted.decisions.length > 0 || extracted.action_items.length > 0) {
+    return extracted;
+  }
+
+  return null;
 };
 
 /**
@@ -73,35 +124,20 @@ const isReasoningText = (text) => {
 const cleanSummaryText = (text, targetLanguage = 'en') => {
   if (!text || typeof text !== 'string') return '';
   let s = text.trim();
-  // Strip code blocks and think tags
   s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
   s = s.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
   s = s.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
-  
-  // If the entire text is reasoning commentary
-  if (isReasoningText(s)) {
-    return targetLanguage === 'hi'
-      ? 'यह एक संक्षिप्त बातचीत / चेक-इन थी।'
-      : 'Brief check-in / greeting with no substantive work items.';
-  }
 
-  // Strip preambles like "I'll output:", "Here is the summary:", "Output:", etc.
+  // Strip preambles
   s = s.replace(/^(?:I'll output|I will output|Here is (?:the )?(?:summary|output|response)|Output|Response|Sure, here is|Okay, here is|Here's (?:the )?(?:summary|output|response))\s*[:：]?\s*/i, '');
-  // Strip json artifacts like { "summary": "..." or "summary": "..."
+  // Strip json artifacts
   s = s.replace(/^\{\s*"?summary"?\s*:\s*["']?/i, '');
   s = s.replace(/^"?summary"?\s*:\s*["']?/i, '');
   s = s.replace(/["']?\s*,\s*"?decisions"?\s*:\s*\[[\s\S]*$/i, '');
   s = s.replace(/["']?\s*,\s*"?action_items"?\s*:\s*\[[\s\S]*$/i, '');
   s = s.replace(/["']?\s*,\s*"?blockers"?\s*:\s*\[[\s\S]*$/i, '');
   s = s.replace(/["']?\s*\}?\s*$/i, '');
-  // Strip leftover outer quotes
   s = s.replace(/^["'“]+|["'”]+$/g, '').trim();
-
-  if (isReasoningText(s)) {
-    return targetLanguage === 'hi'
-      ? 'यह एक संक्षिप्त बातचीत / चेक-इन थी।'
-      : 'Brief check-in / greeting with no substantive work items.';
-  }
 
   return s;
 };
@@ -120,19 +156,27 @@ const extractStructuredKeys = (text) => {
 
   if (!text || typeof text !== 'string') return result;
 
-  // Extract summary
-  const sumMatch = text.match(/"?summary"?\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/i);
+  // Extract summary with multiline/dotAll support
+  const sumMatch = text.match(/"?summary"?\s*:\s*"([\s\S]*?)"(?=\s*,\s*"(?:decisions|action_items|blockers|deadlines)|[\s\n]*\})/i);
   if (sumMatch && sumMatch[1]) {
-    result.summary = sumMatch[1].replace(/\\"/g, '"').trim();
+    result.summary = sumMatch[1].replace(/\\"/g, '"').replace(/\\n/g, ' ').trim();
+  } else {
+    const mdSum = text.match(/(?:###?\s*(?:Executive\s*)?Summary|\*\*Summary:\*\*|Summary:)\s*([^\n#*]+(?:\n[^\n#*]+)*)/i);
+    if (mdSum && mdSum[1]) {
+      result.summary = mdSum[1].trim();
+    }
   }
 
   // Extract decisions
   const decMatch = text.match(/"?decisions"?\s*:\s*\[([\s\S]*?)\]/i);
   if (decMatch && decMatch[1]) {
     try {
-      result.decisions = JSON.parse(`[${decMatch[1]}]`);
+      result.decisions = JSON.parse(`[${decMatch[1].replace(/,\s*$/, '')}]`);
     } catch (_) {
-      result.decisions = decMatch[1].split(/",\s*"/).map(d => d.replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+      const items = decMatch[1].match(/"([^"\\]*(?:\\.[^"\\]*)*)"/g);
+      if (items) {
+        result.decisions = items.map(d => d.replace(/^"|"$/g, '').replace(/\\"/g, '"').trim()).filter(Boolean);
+      }
     }
   }
 
@@ -140,17 +184,39 @@ const extractStructuredKeys = (text) => {
   const actMatch = text.match(/"?action_items"?\s*:\s*\[([\s\S]*?)\]/i);
   if (actMatch && actMatch[1]) {
     try {
-      result.action_items = JSON.parse(`[${actMatch[1]}]`);
-    } catch (_) {}
+      result.action_items = JSON.parse(`[${actMatch[1].replace(/,\s*$/, '')}]`);
+    } catch (_) {
+      const itemBlocks = actMatch[1].match(/\{[\s\S]*?\}/g);
+      if (itemBlocks) {
+        result.action_items = itemBlocks.map(block => {
+          const tMatch = block.match(/"?title"?\s*:\s*"([^"]*)"/i);
+          const aMatch = block.match(/"?assignee"?\s*:\s*"([^"]*)"/i);
+          const dMatch = block.match(/"?deadline"?\s*:\s*"([^"]*)"/i);
+          const sMatch = block.match(/"?source"?\s*:\s*"([^"]*)"/i);
+          if (tMatch && tMatch[1]) {
+            return {
+              title: tMatch[1].trim(),
+              assignee: aMatch ? aMatch[1].trim() : null,
+              deadline: dMatch ? dMatch[1].trim() : null,
+              source: sMatch ? sMatch[1].trim() : null
+            };
+          }
+          return null;
+        }).filter(Boolean);
+      }
+    }
   }
 
   // Extract blockers
   const blkMatch = text.match(/"?blockers"?\s*:\s*\[([\s\S]*?)\]/i);
   if (blkMatch && blkMatch[1]) {
     try {
-      result.blockers = JSON.parse(`[${blkMatch[1]}]`);
+      result.blockers = JSON.parse(`[${blkMatch[1].replace(/,\s*$/, '')}]`);
     } catch (_) {
-      result.blockers = blkMatch[1].split(/",\s*"/).map(b => b.replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+      const items = blkMatch[1].match(/"([^"\\]*(?:\\.[^"\\]*)*)"/g);
+      if (items) {
+        result.blockers = items.map(b => b.replace(/^"|"$/g, '').replace(/\\"/g, '"').trim()).filter(Boolean);
+      }
     }
   }
 
@@ -158,9 +224,12 @@ const extractStructuredKeys = (text) => {
   const dlnMatch = text.match(/"?deadlines"?\s*:\s*\[([\s\S]*?)\]/i);
   if (dlnMatch && dlnMatch[1]) {
     try {
-      result.deadlines = JSON.parse(`[${dlnMatch[1]}]`);
+      result.deadlines = JSON.parse(`[${dlnMatch[1].replace(/,\s*$/, '')}]`);
     } catch (_) {
-      result.deadlines = dlnMatch[1].split(/",\s*"/).map(d => d.replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+      const items = dlnMatch[1].match(/"([^"\\]*(?:\\.[^"\\]*)*)"/g);
+      if (items) {
+        result.deadlines = items.map(d => d.replace(/^"|"$/g, '').replace(/\\"/g, '"').trim()).filter(Boolean);
+      }
     }
   }
 
@@ -168,9 +237,44 @@ const extractStructuredKeys = (text) => {
 };
 
 /**
+ * Intelligent extractive fallback when AI is offline or returns unstructured output.
+ */
+const generateHeuristicSummary = (transcriptText, targetLanguage = 'en') => {
+  if (!transcriptText || !transcriptText.trim()) {
+    return {
+      summary: targetLanguage === 'hi'
+        ? 'बैठक का कोई विवरण उपलब्ध नहीं है।'
+        : 'No transcript was recorded for this meeting.',
+      decisions: [],
+      action_items: [],
+      blockers: [],
+      deadlines: []
+    };
+  }
+
+  const lines = transcriptText
+    .split('\n')
+    .map(l => l.replace(/^\[?[^:\]\n]+\]?:\s*/, '').trim())
+    .filter(l => l.length > 5);
+
+  const cleanSnippet = lines.slice(0, 3).join('. ');
+  const summary = targetLanguage === 'hi'
+    ? `बैठक में हुई चर्चा: ${cleanSnippet || 'संक्षिप्त चर्चा और समन्वय'}`
+    : `Meeting overview: ${cleanSnippet || 'General discussion and team alignment'}.`;
+
+  return {
+    summary,
+    decisions: [],
+    action_items: [],
+    blockers: [],
+    deadlines: []
+  };
+};
+
+/**
  * Validate and clean the structured AI result.
  */
-const sanitizeMeetingSummary = (data, targetLanguage = 'en') => {
+const sanitizeMeetingSummary = (data, targetLanguage = 'en', transcriptFallback = '') => {
   const result = {
     summary: '',
     decisions: [],
@@ -180,21 +284,17 @@ const sanitizeMeetingSummary = (data, targetLanguage = 'en') => {
   };
 
   if (!data || typeof data !== 'object') {
-    result.summary = targetLanguage === 'hi' 
-      ? 'बैठक का कोई ठोस विवरण उपलब्ध नहीं है।'
-      : 'No detailed summary available for this meeting.';
-    return result;
+    return generateHeuristicSummary(transcriptFallback, targetLanguage);
   }
 
   // Summary
   if (typeof data.summary === 'string' && data.summary.trim()) {
-    result.summary = cleanSummaryText(data.summary);
+    result.summary = cleanSummaryText(data.summary, targetLanguage);
   }
 
-  if (!result.summary) {
-    result.summary = targetLanguage === 'hi' 
-      ? 'यह एक संक्षिप्त बातचीत / चेक-इन थी।'
-      : 'This was a brief greeting/check-in.';
+  if (!result.summary || result.summary.includes('could not be structured')) {
+    const heuristic = generateHeuristicSummary(transcriptFallback, targetLanguage);
+    result.summary = heuristic.summary;
   }
 
   // Decisions
@@ -253,23 +353,23 @@ const sanitizeMeetingSummary = (data, targetLanguage = 'en') => {
 };
 
 /**
- * Generate meeting intelligence via NVIDIA Nemotron.
+ * Generate meeting intelligence via LLM with multi-model fallback.
  *
- * @param {string} transcriptText - The complete meeting transcript (with speaker lines where available)
+ * @param {string} transcriptText - The complete meeting transcript
  * @param {string} targetLanguage - 'en' | 'hi' | 'same'
  * @param {Array} participants - List of participant names (optional)
  * @returns {Promise<Object>}
  */
 const analyzeMeetingTranscript = async (transcriptText, targetLanguage = 'en', participants = []) => {
   if (!transcriptText || !transcriptText.trim()) {
-    return sanitizeMeetingSummary(null, targetLanguage);
+    return sanitizeMeetingSummary(null, targetLanguage, '');
   }
 
   // Fast path for trivial / hello-only meetings to guarantee strict zero hallucination
   if (isTrivialTranscript(transcriptText)) {
     const summaryText = targetLanguage === 'hi'
       ? 'यह एक संक्षिप्त बातचीत / चेक-इन थी।'
-      : 'This was a brief greeting/check-in with no substantive work items.';
+      : 'This was a brief greeting / check-in with no substantive work items.';
     return {
       summary: summaryText,
       decisions: [],
@@ -279,8 +379,12 @@ const analyzeMeetingTranscript = async (transcriptText, targetLanguage = 'en', p
     };
   }
 
-  if (!process.env.NVIDIA_API_KEY) {
-    throw new Error('NVIDIA API key not configured');
+  const rawKey = process.env.NVIDIA_API_KEY || '';
+  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/[\r\n\t]/g, '');
+
+  if (!apiKey) {
+    console.warn('[Meeting AI] NVIDIA/OpenRouter API key not configured, using heuristic summary.');
+    return generateHeuristicSummary(transcriptText, targetLanguage);
   }
 
   let languageInstruction = 'Output the summary, decisions, action items, blockers, and deadlines in English.';
@@ -299,7 +403,7 @@ const analyzeMeetingTranscript = async (transcriptText, targetLanguage = 'en', p
 CRITICAL INSTRUCTIONS:
 - You MUST output ONLY a valid JSON object.
 - DO NOT output any thinking, reasoning steps, internal analysis, commentary, or markdown outside the JSON block.
-- Start your response IMMEDIATELY with the '{' character and end with '}'.
+- Start your response IMMEDIATELY with '{' and end with '}'.
 
 Schema:
 {
@@ -321,7 +425,7 @@ Rules:
 1. ${languageInstruction}
 2. Extract ONLY facts, decisions, tasks, blockers, and deadlines that are EXPLICITLY spoken in the transcript.
 3. NEVER hallucinate or invent decisions, action items, blockers, or deadlines.
-4. If a meeting contains only greetings, check-ins, or no substantive work items, output empty arrays for decisions, action_items, blockers, and deadlines, and write a concise 1-sentence summary that it was a check-in.
+4. If a meeting contains only greetings or short status check-ins, output empty arrays for decisions, action_items, blockers, and deadlines, and write a 1-sentence summary of what was discussed.
 5. ${participantList}`;
 
   const userPrompt = `Meeting Transcript:
@@ -329,70 +433,61 @@ ${transcriptText}
 
 Generate JSON analysis:`;
 
-  const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`,
-      'HTTP-Referer': 'https://syncora.app',
-      'X-Title': 'Syncora'
-    },
-    body: JSON.stringify({
-      model: getNvidiaModel(),
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      max_tokens: 1500,
-      temperature: 0.1,
-      stream: false
-    })
-  });
+  const candidateModels = getCandidateModels();
+  let lastError = null;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('NVIDIA API Error (Meeting AI):', errorText);
-    throw new Error('Failed to communicate with AI provider');
-  }
-
-  const data = await response.json();
-  const rawAnswer = data.choices?.[0]?.message?.content || '';
-
-  // Clean reasoning / thinking tokens
-  const cleaned = stripThinking(rawAnswer);
-
-  // Extract JSON
-  let parsedJson = null;
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
+  for (const model of candidateModels) {
     try {
-      parsedJson = JSON.parse(jsonMatch[0]);
-    } catch (parseErr) {
-      console.warn('Failed to parse matched JSON block from Nemotron response:', parseErr.message);
-    }
-  }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-  if (!parsedJson) {
-    try {
-      parsedJson = JSON.parse(cleaned);
-    } catch (_) {
-      // Robust key-based extraction fallback
-      const extracted = extractStructuredKeys(cleaned);
-      if (extracted.summary || extracted.decisions.length > 0 || extracted.action_items.length > 0) {
-        parsedJson = extracted;
-      } else {
-        parsedJson = {
-          summary: cleanSummaryText(cleaned) || 'Meeting summary could not be structured.',
-          decisions: [],
-          action_items: [],
-          blockers: [],
-          deadlines: []
-        };
+      const response = await fetch(`${getNvidiaApiUrl()}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://syncora.app',
+          'X-Title': 'Syncora'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: 1500,
+          temperature: 0.1,
+          stream: false
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`[Meeting AI] Model ${model} returned status ${response.status}:`, errorText.slice(0, 120));
+        lastError = new Error(`Model ${model} returned ${response.status}`);
+        continue;
       }
+
+      const data = await response.json();
+      const rawAnswer = data.choices?.[0]?.message?.content || '';
+
+      if (rawAnswer) {
+        const parsed = parseAndRepairJSON(rawAnswer);
+        if (parsed) {
+          return sanitizeMeetingSummary(parsed, targetLanguage, transcriptText);
+        }
+      }
+    } catch (err) {
+      console.warn(`[Meeting AI] Model ${model} failed/timed out:`, err.message);
+      lastError = err;
     }
   }
 
-  return sanitizeMeetingSummary(parsedJson, targetLanguage);
+  console.warn('[Meeting AI] All AI models exhausted or failed, falling back to extractive summary:', lastError?.message);
+  return generateHeuristicSummary(transcriptText, targetLanguage);
 };
 
 module.exports = {
@@ -402,6 +497,7 @@ module.exports = {
   cleanSummaryText,
   extractStructuredKeys,
   getNvidiaApiUrl,
-  getNvidiaModel
+  getCandidateModels
 };
+
 

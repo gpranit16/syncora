@@ -245,31 +245,35 @@ const generateSummary = async (req, res) => {
 
       if (existing.length > 0) {
         const row = existing[0];
-        let decisions = [], action_items = [], blockers = [], deadlines = [];
-        try { decisions = row.decisions ? JSON.parse(row.decisions) : []; } catch (_) {}
-        try { action_items = row.action_items ? JSON.parse(row.action_items) : []; } catch (_) {}
-        try { blockers = row.blockers ? JSON.parse(row.blockers) : []; } catch (_) {}
-        try { deadlines = row.deadlines ? JSON.parse(row.deadlines) : []; } catch (_) {}
+        const isBadCache = !row.summary_text || row.summary_text.includes('could not be structured');
 
-        return res.status(200).json({
-          success: true,
-          cached: true,
-          summary: {
-            summary_id: row.summary_id,
-            meeting_id: row.meeting_id,
-            meeting_code: row.meeting_code,
-            workspace_id: row.workspace_id,
-            channel_id: row.channel_id,
-            language: row.language,
-            summary_text: row.summary_text,
-            decisions,
-            action_items,
-            blockers,
-            deadlines,
-            created_at: row.created_at,
-            updated_at: row.updated_at
-          }
-        });
+        if (!isBadCache) {
+          let decisions = [], action_items = [], blockers = [], deadlines = [];
+          try { decisions = row.decisions ? JSON.parse(row.decisions) : []; } catch (_) {}
+          try { action_items = row.action_items ? JSON.parse(row.action_items) : []; } catch (_) {}
+          try { blockers = row.blockers ? JSON.parse(row.blockers) : []; } catch (_) {}
+          try { deadlines = row.deadlines ? JSON.parse(row.deadlines) : []; } catch (_) {}
+
+          return res.status(200).json({
+            success: true,
+            cached: true,
+            summary: {
+              summary_id: row.summary_id,
+              meeting_id: row.meeting_id,
+              meeting_code: row.meeting_code,
+              workspace_id: row.workspace_id,
+              channel_id: row.channel_id,
+              language: row.language,
+              summary_text: row.summary_text,
+              decisions,
+              action_items,
+              blockers,
+              deadlines,
+              created_at: row.created_at,
+              updated_at: row.updated_at
+            }
+          });
+        }
       }
     }
 
@@ -295,10 +299,16 @@ const generateSummary = async (req, res) => {
     );
     const participantNames = participants.map(p => p.name).filter(Boolean);
 
-    // 4. Run Nemotron AI analysis
+    // 4. Run AI analysis
     const aiResult = await analyzeMeetingTranscript(transcriptText, normalizedLang, participantNames);
 
-    // 5. Persist summary in DB
+    // 5. Clean previous summaries for this meeting & language to prevent stale cache
+    await db.promise().query(
+      'DELETE FROM meeting_summaries WHERE meeting_id = ? AND language = ?',
+      [meeting.meeting_id, normalizedLang]
+    ).catch(() => {});
+
+    // 6. Persist summary in DB
     const [insertRes] = await db.promise().query(
       `INSERT INTO meeting_summaries (
         meeting_id, meeting_code, workspace_id, channel_id, language,
@@ -375,6 +385,16 @@ const getSummary = async (req, res) => {
     }
 
     const row = rows[0];
+    const isBadCache = !row.summary_text || row.summary_text.includes('could not be structured');
+
+    if (isBadCache) {
+      return res.status(200).json({
+        success: true,
+        summary: null,
+        message: 'Summary requires regeneration'
+      });
+    }
+
     let decisions = [], action_items = [], blockers = [], deadlines = [];
     try { decisions = row.decisions ? JSON.parse(row.decisions) : []; } catch (_) {}
     try { action_items = row.action_items ? JSON.parse(row.action_items) : []; } catch (_) {}

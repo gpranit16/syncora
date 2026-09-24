@@ -133,17 +133,17 @@ export const MeetingAIModal: React.FC<MeetingAIModalProps> = ({
     try {
       if (!forceRegenerate) {
         const existing = await getMeetingSummary(meetingCode, lang);
-        if (existing) {
+        if (existing && existing.summary_text && !existing.summary_text.includes('could not be structured')) {
           setSummary(existing);
           setLoadingSummary(false);
           return;
         }
       }
 
-      // If no cached summary or force regenerate, generate via Nemotron
+      // If no valid cached summary or force regenerate, generate via AI
       const result = await generateMeetingSummary(meetingCode, {
         language: lang,
-        force_regenerate: forceRegenerate,
+        force_regenerate: true,
       });
       setSummary(result.summary);
     } catch (err: any) {
