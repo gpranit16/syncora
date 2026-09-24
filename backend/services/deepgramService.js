@@ -78,6 +78,7 @@ async function startDeepgramSession(io, socket, optionsOrCode, maybeUserId, mayb
       userId,
       userName,
       isAlive: false,
+      keepAliveTimer: null,
     };
 
     activeConnections.set(socket.id, connectionEntry);
@@ -89,6 +90,18 @@ async function startDeepgramSession(io, socket, optionsOrCode, maybeUserId, mayb
       console.log(
         `[Deepgram] Session OPEN — socket=${socket.id} user="${userName}" ${sessionLabel}`
       );
+
+      // Periodically send KeepAlive heartbeats so Deepgram doesn't time out with 1011 during silence/muting
+      if (!connectionEntry.keepAliveTimer) {
+        connectionEntry.keepAliveTimer = setInterval(() => {
+          if (connectionEntry.isAlive && connectionEntry.liveSocket) {
+            try {
+              connectionEntry.liveSocket.sendKeepAlive({ type: 'KeepAlive' });
+            } catch (_) {}
+          }
+        }, 4000);
+      }
+
       socket.emit('deepgram_ready', {
         status: 'connected',
         meetingCode,
@@ -147,11 +160,19 @@ async function startDeepgramSession(io, socket, optionsOrCode, maybeUserId, mayb
       console.error(`[Deepgram] Error for socket=${socket.id}:`, err?.message || err);
       socket.emit('deepgram_error', { message: 'Transcription error. Will attempt to reconnect.' });
       connectionEntry.isAlive = false;
+      if (connectionEntry.keepAliveTimer) {
+        clearInterval(connectionEntry.keepAliveTimer);
+        connectionEntry.keepAliveTimer = null;
+      }
     });
 
     liveSocket.on('close', (event) => {
       console.log(`[Deepgram] Closed socket=${socket.id}`, event?.code);
       connectionEntry.isAlive = false;
+      if (connectionEntry.keepAliveTimer) {
+        clearInterval(connectionEntry.keepAliveTimer);
+        connectionEntry.keepAliveTimer = null;
+      }
       if (activeConnections.get(socket.id) === connectionEntry) {
         activeConnections.delete(socket.id);
       }
@@ -189,6 +210,10 @@ async function stopDeepgramSession(socketId) {
 
   activeConnections.delete(socketId);
   entry.isAlive = false;
+  if (entry.keepAliveTimer) {
+    clearInterval(entry.keepAliveTimer);
+    entry.keepAliveTimer = null;
+  }
 
   try {
     if (entry.liveSocket) {
