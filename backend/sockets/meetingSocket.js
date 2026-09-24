@@ -1,8 +1,98 @@
 const db = require("../config/db");
 const { recordMeetingEndHistory } = require("../services/meetingHistoryService");
+const {
+  startDeepgramSession,
+  sendAudioToDeepgram,
+  stopDeepgramSession,
+} = require("../services/deepgramService");
 
 // Map<meetingCode, { meetingId, title, hostUserId, participants: Map<socketId, ParticipantObject> }>
 const activeMeetingRooms = new Map();
+
+/**
+ * Persist a Deepgram final transcript segment to the meeting_transcripts table.
+ * Called directly via the onFinalSegment callback — NOT via socket round-trip.
+ */
+async function persistDeepgramSegment(payload, rooms, dbConn) {
+  const { meetingCode, speakerId, speakerName, text, timestamp, language } = payload || {};
+  if (!meetingCode || !text || !text.trim()) return;
+
+  let room = rooms.get(meetingCode);
+  if (!room) {
+    const [meetings] = await dbConn.promise().query(
+      "SELECT * FROM meetings WHERE meeting_code = ?",
+      [meetingCode]
+    );
+    if (meetings.length === 0) {
+      console.warn(`[Deepgram] persistDeepgramSegment: meeting ${meetingCode} not found in DB`);
+      return;
+    }
+    const m = meetings[0];
+    room = {
+      meetingId: m.meeting_id,
+      title: m.title,
+      hostUserId: Number(m.host_id || m.host_user_id),
+      meetingType: m.mode || "voice",
+      channelId: m.channel_id,
+      workspaceId: m.workspace_id,
+      createdAt: m.created_at || new Date(),
+      participants: new Map(),
+      transcriptSegments: [],
+    };
+    rooms.set(meetingCode, room);
+  }
+
+  if (!room.transcriptSegments) room.transcriptSegments = [];
+
+  const cleanText = text.trim();
+  const currentTimestamp = timestamp || new Date().toISOString();
+  const currentTsMillis = new Date(currentTimestamp).getTime();
+
+  // Deduplication: same speaker, same text, within 2s
+  const isDuplicate = room.transcriptSegments.some(
+    (s) =>
+      s.speaker_id === speakerId &&
+      s.text.toLowerCase() === cleanText.toLowerCase() &&
+      Math.abs(new Date(s.timestamp).getTime() - currentTsMillis) < 2000
+  );
+
+  if (isDuplicate) return;
+
+  room.transcriptSegments.push({
+    speaker_id: speakerId,
+    speaker_name: speakerName || "Speaker",
+    text: cleanText,
+    timestamp: currentTimestamp,
+    language: language || "multi",
+  });
+
+  const fullText = room.transcriptSegments
+    .map((s) => `${s.speaker_name || "Speaker"}: ${s.text}`)
+    .join("\n");
+  const segmentsJson = JSON.stringify(room.transcriptSegments);
+
+  await dbConn.promise().query(
+    `INSERT INTO meeting_transcripts (
+      meeting_id, meeting_code, workspace_id, channel_id, transcript_text, segments, language
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      transcript_text = VALUES(transcript_text),
+      segments = VALUES(segments),
+      language = VALUES(language),
+      updated_at = CURRENT_TIMESTAMP`,
+    [
+      room.meetingId,
+      meetingCode,
+      room.workspaceId || 0,
+      room.channelId || null,
+      fullText,
+      segmentsJson,
+      language || "multi",
+    ]
+  );
+
+  console.log(`[Deepgram] Persisted segment for "${speakerName}" in meeting=${meetingCode}`);
+}
 
 const meetingSocket = (io, socket, onlineUsers) => {
   // Join a meeting room
@@ -473,7 +563,48 @@ const meetingSocket = (io, socket, onlineUsers) => {
     io.to(roomName).emit("meeting_new_message", msgObj);
   });
 
-  // Live multi-participant speech-to-text transcript chunk handler
+  // ── Deepgram Live Transcription ─────────────────────────────────────────────
+
+  // Client requests to start a Deepgram session
+  socket.on("deepgram_start", async (data) => {
+    try {
+      const { meeting_code, user_id, user_name } = data || {};
+      if (!meeting_code) return;
+
+      socket.join(`meeting_${meeting_code}`);
+
+      const room = activeMeetingRooms.get(meeting_code);
+      const participant = room?.participants?.get(socket.id);
+      const resolvedUserId = participant?.userId || Number(user_id) || null;
+      const resolvedUserName = participant?.userName || user_name || "Speaker";
+
+      console.log(`[Deepgram] Starting session for socket=${socket.id} user="${resolvedUserName}" meeting=${meeting_code}`);
+
+      // Pass onFinalSegment callback — runs directly in-process, no socket round-trip
+      await startDeepgramSession(
+        io, socket, meeting_code, resolvedUserId, resolvedUserName,
+        async (payload) => {
+          await persistDeepgramSegment(payload, activeMeetingRooms, db);
+        }
+      );
+    } catch (err) {
+      console.error("[Deepgram] deepgram_start error:", err.message);
+    }
+  });
+
+  // Client streams raw PCM audio chunks (Binary Buffer/ArrayBuffer)
+  socket.on("deepgram_audio_chunk", (audioData) => {
+    if (!audioData) return;
+    const buffer = Buffer.isBuffer(audioData) ? audioData : Buffer.from(audioData);
+    sendAudioToDeepgram(socket.id, buffer);
+  });
+
+  // Client requests to stop Deepgram session (e.g. on mute or meeting end)
+  socket.on("deepgram_stop", async () => {
+    await stopDeepgramSession(socket.id);
+  });
+
+  // ── Legacy browser SpeechRecognition transcript chunk handler (kept for backwards compat) ──
   socket.on("meeting_transcript_chunk", async (data) => {
     try {
       const { meeting_code, text, user_id, user_name, timestamp, language } = data || {};
@@ -732,7 +863,10 @@ const saveRoomTranscript = async (room, meetingCode) => {
 };
 
 // Cleanup helper called on socket disconnect
-const handleMeetingDisconnect = (io, socket) => {
+const handleMeetingDisconnect = async (io, socket) => {
+  // Stop any active Deepgram session for this socket
+  await stopDeepgramSession(socket.id).catch(() => {});
+
   for (const [code, room] of activeMeetingRooms.entries()) {
     if (room.participants.has(socket.id)) {
       const p = room.participants.get(socket.id);

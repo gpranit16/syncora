@@ -1795,3 +1795,25 @@
   }
 }
 
+
+/* -- Deepgram Live Transcript Sidebar -- */
+.transcript-sidebar {}
+
+.transcript-entry-interim .chat-msg-bubble {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px dashed rgba(99, 102, 241, 0.3);
+}
+
+.transcript-entry-interim .chat-msg-bubble p {
+  color: rgba(243, 244, 246, 0.65);
+  font-style: italic;
+}
+
+.transcript-entry-final .chat-msg-bubble {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}

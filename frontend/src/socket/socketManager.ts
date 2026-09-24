@@ -333,6 +333,7 @@ export const emitMeetingSendMessage = (data: {
   getSocket().emit('meeting_send_message', data);
 };
 
+
 export const emitMeetingToggleScreenShareLock = (data: {
   meeting_code: string;
   is_locked: boolean;
@@ -340,5 +341,19 @@ export const emitMeetingToggleScreenShareLock = (data: {
   getSocket().emit('meeting_toggle_screen_share_lock', data);
 };
 
+// ── Deepgram Real-Time Transcription ──────────────────────────────────────────
+export const emitDeepgramStart = (data: {
+  meeting_code: string;
+  user_id?: number;
+  user_name?: string;
+}) => {
+  getSocket().emit('deepgram_start', data);
+};
 
+export const emitDeepgramAudioChunk = (audioBuffer: ArrayBuffer) => {
+  getSocket().emit('deepgram_audio_chunk', audioBuffer);
+};
 
+export const emitDeepgramStop = () => {
+  getSocket().emit('deepgram_stop');
+};

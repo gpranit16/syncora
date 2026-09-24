@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useMeeting, MeetingParticipantPeer } from '../../context/MeetingContext';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -21,10 +21,15 @@ import {
   MonitorOff,
   MessageSquare,
   Send,
+  FileText,
+  AlertCircle,
 } from 'lucide-react';
 import client from '../../api/client';
 import { inviteToMeeting } from '../../api/meetings';
-import { emitMeetingTranscriptChunk } from '../../socket/socketManager';
+import {
+  useDeepgramTranscription,
+  DeepgramTranscriptEntry,
+} from '../../hooks/useDeepgramTranscription';
 import './MeetingRoom.css';
 
 // Individual Participant Tile (Handles remote stream binding & audio playback)
@@ -379,6 +384,7 @@ export const MeetingRoom: React.FC = () => {
   const { user } = useAuth();
   const {
     meeting,
+    meetingStatus,
     localStream,
     remoteStreams,
     participants,
@@ -406,8 +412,17 @@ export const MeetingRoom: React.FC = () => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
   const [showChat, setShowChat] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+
+  // Transcript state — Map of speaker ID → { final entries } + interim per speaker
+  // finalEntries: permanently committed transcript lines
+  // interimMap: one interim entry per speaker (replaced on every interim update, cleared on final)
+  const [finalTranscriptEntries, setFinalTranscriptEntries] = useState<DeepgramTranscriptEntry[]>([]);
+  const [interimTranscriptMap, setInterimTranscriptMap] = useState<Map<string, DeepgramTranscriptEntry>>(new Map());
+  const [transcriptionStatus, setTranscriptionStatus] = useState<'idle' | 'connecting' | 'active' | 'error' | 'muted'>('idle');
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   // In-Meeting Chat state
   const [chatInputText, setChatInputText] = useState('');
@@ -422,6 +437,58 @@ export const MeetingRoom: React.FC = () => {
   const [inviteSuccessMsg, setInviteSuccessMsg] = useState<string | null>(null);
 
   const isVideoMeeting = meeting ? (meeting.mode || meeting.meeting_type) === 'video' : true;
+
+  // Deepgram transcript callback — handles interim/final correctly
+  const handleTranscriptUpdate = useCallback((entry: DeepgramTranscriptEntry) => {
+    if (entry.isFinal) {
+      // Commit to final entries and clear this speaker's interim
+      setFinalTranscriptEntries((prev) => {
+        // Avoid duplicate: check last entry from this speaker within 1.5s
+        const now = new Date(entry.timestamp).getTime();
+        const hasDup = prev.some(
+          (e) =>
+            e.speakerId === entry.speakerId &&
+            e.text.toLowerCase() === entry.text.toLowerCase() &&
+            Math.abs(new Date(e.timestamp).getTime() - now) < 1500
+        );
+        if (hasDup) return prev;
+        return [...prev, { ...entry, id: `final_${Date.now()}_${Math.random()}` }];
+      });
+      setInterimTranscriptMap((prev) => {
+        const updated = new Map(prev);
+        updated.delete(entry.id); // entry.id is speaker_<userId>
+        return updated;
+      });
+    } else {
+      // Update/replace this speaker's interim result
+      setInterimTranscriptMap((prev) => {
+        const updated = new Map(prev);
+        updated.set(entry.id, entry); // entry.id is speaker_<userId>
+        return updated;
+      });
+    }
+  }, []);
+
+  const isInMeeting = meetingStatus === 'in_meeting';
+
+  // Deepgram transcription hook — replaces old SpeechRecognition
+  useDeepgramTranscription({
+    localStream,
+    meetingCode: meeting?.meeting_code,
+    userId: user?.user_id,
+    userName: user?.name || 'Speaker',
+    isMuted,
+    isInMeeting,
+    onTranscriptUpdate: handleTranscriptUpdate,
+    onStatusChange: setTranscriptionStatus,
+  });
+
+  // Auto-scroll transcript
+  useEffect(() => {
+    if (showTranscript) {
+      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [finalTranscriptEntries, showTranscript]);
 
   // Meeting duration timer
   useEffect(() => {
@@ -456,6 +523,16 @@ export const MeetingRoom: React.FC = () => {
     setShowRoster(nextState);
     if (nextState) {
       setShowChat(false);
+      setShowTranscript(false);
+    }
+  };
+
+  const handleToggleTranscript = () => {
+    const nextState = !showTranscript;
+    setShowTranscript(nextState);
+    if (nextState) {
+      setShowChat(false);
+      setShowRoster(false);
     }
   };
 
@@ -466,189 +543,13 @@ export const MeetingRoom: React.FC = () => {
     setChatInputText('');
   };
 
-  // Persistent refs to avoid effect re-triggers on every 1-second render tick
   const meetingCodeRef = useRef<string | null>(null);
   meetingCodeRef.current = meeting?.meeting_code || null;
-
-  const isMutedRef = useRef<boolean>(isMuted);
-  isMutedRef.current = isMuted;
 
   const userRef = useRef(user);
   userRef.current = user;
 
-  const recognitionRef = useRef<any>(null);
-  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const watchdogTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isComponentMountedRef = useRef<boolean>(true);
-  const isRecognizingRef = useRef<boolean>(false);
-  const sessionSeqRef = useRef<number>(0);
-  const totalUtterancesRef = useRef<number>(0);
-  const pendingSpeechBufferRef = useRef<string>('');
-
-  // Unified Live Speech Recognition Engine with Watchdog & Fresh Session Recycling
-  useEffect(() => {
-    isComponentMountedRef.current = true;
-    const SpeechRecognitionClass =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognitionClass) {
-      console.warn('[STT Engine] SpeechRecognition API is not supported in this browser.');
-      return;
-    }
-
-    const cleanupActiveInstance = () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.onstart = null;
-          recognitionRef.current.onresult = null;
-          recognitionRef.current.onerror = null;
-          recognitionRef.current.onend = null;
-          recognitionRef.current.onaudiostart = null;
-          recognitionRef.current.onspeechstart = null;
-          recognitionRef.current.abort();
-        } catch (_) {}
-        recognitionRef.current = null;
-      }
-      isRecognizingRef.current = false;
-    };
-
-    const spawnFreshRecognitionSession = () => {
-      if (!isComponentMountedRef.current) return;
-      if (isMutedRef.current) {
-        return;
-      }
-      if (!meetingCodeRef.current) {
-        return;
-      }
-
-      cleanupActiveInstance();
-
-      sessionSeqRef.current += 1;
-      const currentSessionId = sessionSeqRef.current;
-
-      try {
-        const rec = new SpeechRecognitionClass();
-        rec.continuous = true;
-        rec.interimResults = true;
-        rec.maxAlternatives = 1;
-        rec.lang = navigator.language || 'en-US';
-
-        rec.onstart = () => {
-          isRecognizingRef.current = true;
-          console.log(`[STT Engine Session #${currentSessionId}] Active & listening for meeting ${meetingCodeRef.current}`);
-        };
-
-        rec.onresult = (event: any) => {
-          let latestInterim = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcriptSegment = event.results[i][0]?.transcript?.trim();
-            if (event.results[i].isFinal) {
-              if (transcriptSegment) {
-                totalUtterancesRef.current += 1;
-                console.log(
-                  `[STT Engine Session #${currentSessionId}] Utterance #${totalUtterancesRef.current}: "${transcriptSegment}"`
-                );
-                if (meetingCodeRef.current) {
-                  emitMeetingTranscriptChunk({
-                    meeting_code: meetingCodeRef.current,
-                    text: transcriptSegment,
-                    user_id: userRef.current?.user_id,
-                    user_name: userRef.current?.name || 'Speaker',
-                    timestamp: new Date().toISOString(),
-                  });
-                }
-                pendingSpeechBufferRef.current = '';
-              }
-            } else {
-              latestInterim = transcriptSegment;
-            }
-          }
-          if (latestInterim) {
-            pendingSpeechBufferRef.current = latestInterim;
-          }
-        };
-
-        rec.onerror = (event: any) => {
-          const errType = event.error || 'unknown';
-          if (errType !== 'no-speech' && errType !== 'aborted') {
-            console.warn(`[STT Engine Session #${currentSessionId}] Error: ${errType}`);
-          }
-        };
-
-        rec.onend = () => {
-          isRecognizingRef.current = false;
-          // Flush any pending interim speech buffer
-          if (pendingSpeechBufferRef.current && pendingSpeechBufferRef.current.trim()) {
-            const flushText = pendingSpeechBufferRef.current.trim();
-            console.log(`[STT Engine Session #${currentSessionId}] Flushing buffer on end: "${flushText}"`);
-            if (meetingCodeRef.current) {
-              emitMeetingTranscriptChunk({
-                meeting_code: meetingCodeRef.current,
-                text: flushText,
-                user_id: userRef.current?.user_id,
-                user_name: userRef.current?.name || 'Speaker',
-                timestamp: new Date().toISOString(),
-              });
-            }
-            pendingSpeechBufferRef.current = '';
-          }
-
-          // Automatically restart a fresh session if still active, unmuted, and mounted
-          if (isComponentMountedRef.current && !isMutedRef.current && meetingCodeRef.current) {
-            if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-            restartTimerRef.current = setTimeout(() => {
-              spawnFreshRecognitionSession();
-            }, 200);
-          }
-        };
-
-        recognitionRef.current = rec;
-        rec.start();
-      } catch (err: any) {
-        console.warn(`[STT Engine Session #${currentSessionId}] Start failed:`, err.message);
-        isRecognizingRef.current = false;
-        if (isComponentMountedRef.current && !isMutedRef.current && meetingCodeRef.current) {
-          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-          restartTimerRef.current = setTimeout(() => {
-            spawnFreshRecognitionSession();
-          }, 600);
-        }
-      }
-    };
-
-    // If unmuted and in a meeting, start immediately
-    if (!isMuted && meeting?.meeting_code) {
-      spawnFreshRecognitionSession();
-    } else {
-      cleanupActiveInstance();
-    }
-
-    // Active Watchdog Heartbeat
-    if (watchdogTimerRef.current) clearInterval(watchdogTimerRef.current);
-    watchdogTimerRef.current = setInterval(() => {
-      if (
-        isComponentMountedRef.current &&
-        !isMutedRef.current &&
-        meetingCodeRef.current &&
-        !isRecognizingRef.current
-      ) {
-        console.log('[STT Engine Watchdog] Inactive session detected while unmuted, restoring fresh session...');
-        spawnFreshRecognitionSession();
-      }
-    }, 2500);
-
-    return () => {
-      if (restartTimerRef.current) {
-        clearTimeout(restartTimerRef.current);
-        restartTimerRef.current = null;
-      }
-      if (watchdogTimerRef.current) {
-        clearInterval(watchdogTimerRef.current);
-        watchdogTimerRef.current = null;
-      }
-      cleanupActiveInstance();
-    };
-  }, [isMuted, meeting?.meeting_code]);
+  // (Old SpeechRecognition refs removed — replaced by useDeepgramTranscription hook)
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -1037,6 +938,88 @@ export const MeetingRoom: React.FC = () => {
             </div>
           </aside>
         )}
+
+        {/* Live Transcript Sidebar (Deepgram Real-Time) */}
+        {showTranscript && (
+          <aside className="meeting-chat-sidebar transcript-sidebar">
+            <div className="chat-sidebar-header">
+              <div className="chat-title-group">
+                <FileText size={16} />
+                <div>
+                  <h3>Live Transcript</h3>
+                  <span className="chat-disclaimer">
+                    {transcriptionStatus === 'active' && (
+                      <span style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block', animation: 'pulse 1.5s infinite' }} />
+                        Live · Deepgram Nova-3
+                      </span>
+                    )}
+                    {transcriptionStatus === 'connecting' && 'Connecting to transcription...'}
+                    {transcriptionStatus === 'muted' && 'Transcription paused (muted)'}
+                    {transcriptionStatus === 'error' && (
+                      <span style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <AlertCircle size={12} /> Transcription unavailable
+                      </span>
+                    )}
+                    {transcriptionStatus === 'idle' && 'Waiting to start...'}
+                  </span>
+                </div>
+              </div>
+              <button className="roster-close-btn" onClick={() => setShowTranscript(false)}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="chat-messages-container">
+              {finalTranscriptEntries.length === 0 && interimTranscriptMap.size === 0 ? (
+                <div className="chat-empty-state">
+                  <FileText size={32} className="chat-empty-icon" />
+                  <p className="chat-empty-text">No transcript yet</p>
+                  <span>Speak to start live transcription powered by Deepgram Nova-3.</span>
+                </div>
+              ) : (
+                <>
+                  {/* Final committed transcript entries */}
+                  {finalTranscriptEntries.map((entry) => (
+                    <div key={entry.id} className="chat-message-item transcript-entry-final">
+                      <div className="chat-msg-header">
+                        <div className="chat-msg-sender-info">
+                          <span className="chat-sender-name">{entry.speakerName}</span>
+                          {entry.speakerId === user?.user_id && (
+                            <span className="chat-tag-badge you">You</span>
+                          )}
+                        </div>
+                        <span className="chat-msg-time">{formatMessageTime(entry.timestamp)}</span>
+                      </div>
+                      <div className="chat-msg-bubble">
+                        <p>{entry.text}</p>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Interim results per speaker (replace on each update) */}
+                  {Array.from(interimTranscriptMap.values()).map((entry) => (
+                    <div key={entry.id} className="chat-message-item transcript-entry-interim">
+                      <div className="chat-msg-header">
+                        <div className="chat-msg-sender-info">
+                          <span className="chat-sender-name">{entry.speakerName}</span>
+                          {entry.speakerId === user?.user_id && (
+                            <span className="chat-tag-badge you">You</span>
+                          )}
+                        </div>
+                        <span className="chat-msg-time" style={{ opacity: 0.5 }}>live...</span>
+                      </div>
+                      <div className="chat-msg-bubble transcript-interim-bubble">
+                        <p style={{ opacity: 0.7, fontStyle: 'italic' }}>{entry.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+              <div ref={transcriptEndRef} />
+            </div>
+          </aside>
+        )}
       </main>
 
       {/* Floating Bottom Controls Dock (Google Meet Style) */}
@@ -1115,6 +1098,34 @@ export const MeetingRoom: React.FC = () => {
               <span className="dock-badge">{totalCount}</span>
             </div>
             <span className="dock-btn-label">People</span>
+          </button>
+
+          {/* Live Transcript Toggle Button */}
+          <button
+            type="button"
+            className={`dock-btn ${showTranscript ? 'active' : ''}`}
+            onClick={handleToggleTranscript}
+            title="Live transcript (Deepgram Nova-3)"
+            aria-label="Live transcript"
+          >
+            <div className="dock-icon-with-badge">
+              <FileText size={19} />
+              {transcriptionStatus === 'active' && (
+                <span
+                  className="dock-badge"
+                  style={{
+                    background: '#22c55e',
+                    minWidth: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    padding: 0,
+                    top: -2,
+                    right: -2,
+                  }}
+                />
+              )}
+            </div>
+            <span className="dock-btn-label">Transcript</span>
           </button>
 
           {/* Invite Button */}
