@@ -33,14 +33,14 @@ export interface CreateTaskFromMessagePayload {
   source_dm_user_id?: number;
 }
 
-export const getTasks = (workspaceId: number) =>
-  client.get<{ success: boolean; tasks: Task[] }>(`/tasks/workspace/${workspaceId}`);
+export const getTasks = (workspaceId: number, params?: { scope?: string; assigned_to?: number | 'me'; created_by?: number | 'me'; status?: string }) =>
+  client.get<{ success: boolean; tasks: Task[] }>(`/tasks/workspace/${workspaceId}`, { params });
 
 export const createTask = (data: {
   workspace_id: number;
   title: string;
   description?: string;
-  assigned_to?: number;
+  assigned_to?: number | null;
   status?: string;
   priority?: string;
   due_date?: string;
@@ -54,8 +54,12 @@ export const updateTask = (taskId: number, data: {
   description?: string;
   priority?: string;
   status?: string;
+  due_date?: string | null;
   assigned_to?: number | null;
 }) => client.put(`/tasks/update/${taskId}`, data);
+
+export const deleteTask = (taskId: number) =>
+  client.delete<{ success: boolean; message: string; task_id: number }>(`/tasks/${taskId}`);
 
 export const updateTaskStatus = (taskId: number, status: string) =>
   client.put(`/tasks/status/${taskId}`, { status });

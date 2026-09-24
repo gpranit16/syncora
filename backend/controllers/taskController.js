@@ -88,10 +88,31 @@ const createTask = async (req, res) => {
       ]
     );
 
+    const [createdRows] = await db.promise().query(
+      `SELECT
+        t.task_id,
+        t.workspace_id,
+        t.title,
+        t.description,
+        t.status,
+        t.priority,
+        t.due_date,
+        t.created_at,
+        assigned.user_id AS assigned_to,
+        assigned.name AS assigned_to_name,
+        creator.user_id AS created_by,
+        creator.name AS created_by_name
+      FROM tasks t
+      LEFT JOIN users assigned ON t.assigned_to = assigned.user_id
+      INNER JOIN users creator ON t.created_by = creator.user_id
+      WHERE t.task_id = ?`,
+      [result.insertId]
+    );
+
     return res.status(201).json({
       success: true,
       message: "Task created successfully",
-      task: {
+      task: createdRows[0] || {
         task_id: result.insertId,
         workspace_id,
         assigned_to: assigned_to || null,
@@ -254,7 +275,7 @@ const createTaskFromMessage = async (req, res) => {
 const updateTask = async (req, res) => {
   try {
     const { taskId } = req.params;
-    const { title, description, priority, assigned_to, status } = req.body;
+    const { title, description, priority, assigned_to, status, due_date } = req.body;
     const userId = req.user.user_id;
 
     const [tasks] = await db.promise().query(
@@ -275,8 +296,9 @@ const updateTask = async (req, res) => {
     const updates = [];
     const values = [];
 
-    if (title !== undefined) { updates.push("title = ?"); values.push(title); }
-    if (description !== undefined) { updates.push("description = ?"); values.push(description); }
+    if (title !== undefined) { updates.push("title = ?"); values.push(title.trim()); }
+    if (description !== undefined) { updates.push("description = ?"); values.push(description ? description.trim() : null); }
+    if (due_date !== undefined) { updates.push("due_date = ?"); values.push(due_date || null); }
     if (priority !== undefined) {
       if (!allowedPriorities.includes(priority)) {
         return res.status(400).json({ success: false, message: "Invalid priority" });
@@ -290,13 +312,15 @@ const updateTask = async (req, res) => {
       updates.push("status = ?"); values.push(status);
     }
     if (assigned_to !== undefined) {
-      if (assigned_to !== null) {
+      if (assigned_to !== null && assigned_to !== '') {
         const isAssigneeMember = await checkWorkspaceMembership(task.workspace_id, assigned_to);
         if (!isAssigneeMember) {
           return res.status(400).json({ success: false, message: "Assigned user must be a workspace member" });
         }
+        updates.push("assigned_to = ?"); values.push(Number(assigned_to));
+      } else {
+        updates.push("assigned_to = NULL");
       }
-      updates.push("assigned_to = ?"); values.push(assigned_to);
     }
 
     if (updates.length === 0) {
@@ -306,10 +330,69 @@ const updateTask = async (req, res) => {
     values.push(taskId);
     await db.promise().query(`UPDATE tasks SET ${updates.join(", ")} WHERE task_id = ?`, values);
 
-    return res.status(200).json({ success: true, message: "Task updated successfully", task: { task_id: Number(taskId) } });
+    return res.status(200).json({
+      success: true,
+      message: "Task updated successfully",
+      task: {
+        task_id: Number(taskId),
+        title,
+        description,
+        priority,
+        status,
+        due_date,
+        assigned_to
+      }
+    });
   } catch (error) {
     console.error("updateTask error:", error.message);
     return res.status(500).json({ success: false, message: "Server error while updating task" });
+  }
+};
+
+const deleteTask = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const userId = req.user.user_id;
+
+    const [tasks] = await db.promise().query(
+      "SELECT task_id, workspace_id, created_by, assigned_to FROM tasks WHERE task_id = ?",
+      [taskId]
+    );
+    if (tasks.length === 0) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const task = tasks[0];
+    const isMember = await checkWorkspaceMembership(task.workspace_id, userId);
+    if (!isMember) {
+      return res.status(403).json({ success: false, message: "You are not a member of this workspace" });
+    }
+
+    // Allow deletion if user is creator, assignee, or workspace owner/admin
+    const [roles] = await db.promise().query(
+      "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+      [task.workspace_id, userId]
+    );
+    const userRole = roles[0]?.role;
+    const canDelete =
+      task.created_by === userId ||
+      task.assigned_to === userId ||
+      ["owner", "admin"].includes(userRole);
+
+    if (!canDelete) {
+      return res.status(403).json({ success: false, message: "Not authorized to delete this task" });
+    }
+
+    await db.promise().query("DELETE FROM tasks WHERE task_id = ?", [taskId]);
+
+    return res.status(200).json({
+      success: true,
+      message: "Task deleted successfully",
+      task_id: Number(taskId)
+    });
+  } catch (error) {
+    console.error("Delete task error:", error.message);
+    return res.status(500).json({ success: false, message: "Server error while deleting task" });
   }
 };
 
@@ -317,6 +400,7 @@ const getWorkspaceTasks = async (req, res) => {
   try {
     const { workspaceId } = req.params;
     const userId = req.user.user_id;
+    const { scope, assigned_to, created_by, status } = req.query;
 
     if (!workspaceId) {
       return res.status(400).json({
@@ -334,8 +418,8 @@ const getWorkspaceTasks = async (req, res) => {
       });
     }
 
-    const [tasks] = await db.promise().query(
-      `SELECT
+    let query = `
+      SELECT
         t.task_id,
         t.workspace_id,
         t.title,
@@ -358,9 +442,34 @@ const getWorkspaceTasks = async (req, res) => {
       INNER JOIN users creator
         ON t.created_by = creator.user_id
       WHERE t.workspace_id = ?
-      ORDER BY t.created_at DESC`,
-      [workspaceId]
-    );
+    `;
+
+    const queryParams = [workspaceId];
+
+    // Filter by scope / assigned_to
+    if (scope === "assigned_to_me" || assigned_to === "me") {
+      query += " AND t.assigned_to = ?";
+      queryParams.push(userId);
+    } else if (assigned_to && !isNaN(assigned_to)) {
+      query += " AND t.assigned_to = ?";
+      queryParams.push(Number(assigned_to));
+    } else if (scope === "created_by_me" || created_by === "me") {
+      query += " AND t.created_by = ?";
+      queryParams.push(userId);
+    } else if (created_by && !isNaN(created_by)) {
+      query += " AND t.created_by = ?";
+      queryParams.push(Number(created_by));
+    }
+
+    // Filter by status if provided
+    if (status && allowedStatuses.includes(status)) {
+      query += " AND t.status = ?";
+      queryParams.push(status);
+    }
+
+    query += " ORDER BY t.created_at DESC";
+
+    const [tasks] = await db.promise().query(query, queryParams);
 
     return res.status(200).json({
       success: true,
@@ -444,6 +553,7 @@ module.exports = {
   createTask,
   createTaskFromMessage,
   updateTask,
+  deleteTask,
   getWorkspaceTasks,
   updateTaskStatus,
 };
