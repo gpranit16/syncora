@@ -1,6 +1,7 @@
 const db = require("../config/db");
 const { recordCallHistory } = require("../services/callHistoryService");
 const { meetingSocket, handleMeetingDisconnect } = require("./meetingSocket");
+const { stopDeepgramSession } = require("../services/deepgramService");
 
 const onlineUsers = new Map();
 const activeCalls = new Map();
@@ -388,6 +389,9 @@ const chatSocket = (io) => {
           createdAt: Date.now()
         });
 
+        // Join caller to call room
+        socket.join(`call_${callId}`);
+
         // Notify receiver room
         io.to(`user_${normalizedReceiverId}`).emit("incoming_call", {
           call_id: callId,
@@ -436,6 +440,13 @@ const chatSocket = (io) => {
       call.receiverSocketId = socket.id;
       call.startedAt = Date.now();
 
+      // Ensure both receiver and caller sockets join the call room for transcription & in-call events
+      socket.join(`call_${call_id}`);
+      if (call.callerSocketId) {
+        const callerSocket = io.sockets.sockets.get(call.callerSocketId);
+        if (callerSocket) callerSocket.join(`call_${call_id}`);
+      }
+
       io.to(`user_${call.callerId}`).emit("call_accepted", {
         call_id,
         receiver_id: Number(receiverId),
@@ -449,7 +460,10 @@ const chatSocket = (io) => {
       const userId = onlineUsers.get(socket.id);
       const call = activeCalls.get(call_id);
 
+      // Clean up any transcription sessions
+      stopDeepgramSession(socket.id).catch(() => {});
       if (call) {
+        if (call.callerSocketId) stopDeepgramSession(call.callerSocketId).catch(() => {});
         activeCalls.delete(call_id);
         const targetId = call.callerId === Number(userId) ? call.receiverId : call.callerId;
         io.to(`user_${targetId}`).emit("call_rejected", {
@@ -484,6 +498,9 @@ const chatSocket = (io) => {
     socket.on("call_end", async ({ call_id, target_user_id, reason }) => {
       const senderId = onlineUsers.get(socket.id);
 
+      // Stop Deepgram transcription for the user ending the call
+      stopDeepgramSession(socket.id).catch(() => {});
+
       let call = null;
       if (call_id) {
         call = activeCalls.get(call_id);
@@ -496,6 +513,12 @@ const chatSocket = (io) => {
             break;
           }
         }
+      }
+
+      // Stop Deepgram transcription for the peer as well
+      if (call) {
+        if (call.callerSocketId) stopDeepgramSession(call.callerSocketId).catch(() => {});
+        if (call.receiverSocketId) stopDeepgramSession(call.receiverSocketId).catch(() => {});
       }
 
       const activeCallId = call ? call.callId : call_id;
@@ -537,6 +560,7 @@ const chatSocket = (io) => {
 
     socket.on("disconnect", async () => {
       handleMeetingDisconnect(io, socket);
+      stopDeepgramSession(socket.id).catch(() => {});
 
       const userId = onlineUsers.get(socket.id);
 

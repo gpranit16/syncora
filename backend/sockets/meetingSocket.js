@@ -565,28 +565,48 @@ const meetingSocket = (io, socket, onlineUsers) => {
 
   // ── Deepgram Live Transcription ─────────────────────────────────────────────
 
-  // Client requests to start a Deepgram session
+  // Client requests to start a Deepgram session (for Meeting or 1-on-1 Call)
   socket.on("deepgram_start", async (data) => {
     try {
-      const { meeting_code, user_id, user_name } = data || {};
-      if (!meeting_code) return;
+      const { meeting_code, call_id, user_id, user_name } = data || {};
+      if (!meeting_code && !call_id) return;
 
-      socket.join(`meeting_${meeting_code}`);
+      if (meeting_code) {
+        socket.join(`meeting_${meeting_code}`);
 
-      const room = activeMeetingRooms.get(meeting_code);
-      const participant = room?.participants?.get(socket.id);
-      const resolvedUserId = participant?.userId || Number(user_id) || null;
-      const resolvedUserName = participant?.userName || user_name || "Speaker";
+        const room = activeMeetingRooms.get(meeting_code);
+        const participant = room?.participants?.get(socket.id);
+        const resolvedUserId = participant?.userId || Number(user_id) || null;
+        const resolvedUserName = participant?.userName || user_name || "Speaker";
 
-      console.log(`[Deepgram] Starting session for socket=${socket.id} user="${resolvedUserName}" meeting=${meeting_code}`);
+        console.log(`[Deepgram] Starting session for socket=${socket.id} user="${resolvedUserName}" meeting=${meeting_code}`);
 
-      // Pass onFinalSegment callback — runs directly in-process, no socket round-trip
-      await startDeepgramSession(
-        io, socket, meeting_code, resolvedUserId, resolvedUserName,
-        async (payload) => {
-          await persistDeepgramSegment(payload, activeMeetingRooms, db);
-        }
-      );
+        // Pass onFinalSegment callback — runs directly in-process, no socket round-trip
+        await startDeepgramSession(io, socket, {
+          meetingCode: meeting_code,
+          userId: resolvedUserId,
+          userName: resolvedUserName,
+          onFinalSegment: async (payload) => {
+            await persistDeepgramSegment(payload, activeMeetingRooms, db);
+          },
+        });
+      } else if (call_id) {
+        socket.join(`call_${call_id}`);
+
+        const resolvedUserId = Number(user_id) || onlineUsers.get(socket.id) || null;
+        const resolvedUserName = user_name || "Speaker";
+
+        console.log(`[Deepgram] Starting session for socket=${socket.id} user="${resolvedUserName}" call=${call_id}`);
+
+        await startDeepgramSession(io, socket, {
+          callId: call_id,
+          userId: resolvedUserId,
+          userName: resolvedUserName,
+          onFinalSegment: async (payload) => {
+            console.log(`[Deepgram Call] FINAL from "${resolvedUserName}" in call=${call_id}: "${payload.text}"`);
+          },
+        });
+      }
     } catch (err) {
       console.error("[Deepgram] deepgram_start error:", err.message);
     }

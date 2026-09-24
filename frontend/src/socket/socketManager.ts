@@ -343,7 +343,8 @@ export const emitMeetingToggleScreenShareLock = (data: {
 
 // ── Deepgram Real-Time Transcription ──────────────────────────────────────────
 export const emitDeepgramStart = (data: {
-  meeting_code: string;
+  meeting_code?: string;
+  call_id?: string;
   user_id?: number;
   user_name?: string;
 }) => {

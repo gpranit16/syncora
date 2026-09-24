@@ -15,16 +15,36 @@ const activeConnections = new Map();
 
 /**
  * Start a Deepgram live transcription session for a socket.
+ * Supports both multi-user channel meetings (meetingCode) and 1-on-1 direct calls (callId).
  *
- * @param {object}   io              - Socket.IO server instance
- * @param {object}   socket          - The client Socket.IO socket
- * @param {string}   meetingCode
- * @param {number}   userId
- * @param {string}   userName
- * @param {function} onFinalSegment  - async fn(payload) called for each speech_final result.
- *                                     Runs server-side for DB persistence.
+ * @param {object} io                     - Socket.IO server instance
+ * @param {object} socket                 - The client Socket.IO socket
+ * @param {string|object} optionsOrCode   - meetingCode string OR options object:
+ *                                          { meetingCode, callId, userId, userName, onFinalSegment }
+ * @param {number} [maybeUserId]
+ * @param {string} [maybeUserName]
+ * @param {function} [maybeOnFinalSegment]
  */
-async function startDeepgramSession(io, socket, meetingCode, userId, userName, onFinalSegment) {
+async function startDeepgramSession(io, socket, optionsOrCode, maybeUserId, maybeUserName, maybeOnFinalSegment) {
+  let meetingCode = null;
+  let callId = null;
+  let userId = null;
+  let userName = 'Speaker';
+  let onFinalSegment = null;
+
+  if (optionsOrCode && typeof optionsOrCode === 'object') {
+    meetingCode = optionsOrCode.meetingCode || null;
+    callId = optionsOrCode.callId || null;
+    userId = optionsOrCode.userId || null;
+    userName = optionsOrCode.userName || 'Speaker';
+    onFinalSegment = optionsOrCode.onFinalSegment || null;
+  } else {
+    meetingCode = optionsOrCode || null;
+    userId = maybeUserId || null;
+    userName = maybeUserName || 'Speaker';
+    onFinalSegment = maybeOnFinalSegment || null;
+  }
+
   const apiKey = process.env.DEEPGRAM_API_KEY;
 
   if (!apiKey) {
@@ -39,13 +59,12 @@ async function startDeepgramSession(io, socket, meetingCode, userId, userName, o
   try {
     const deepgram = new DeepgramClient({ apiKey });
 
+    // Nova-3 streaming configuration matching standalone test
     const liveSocket = await deepgram.listen.v1.connect({
       model: 'nova-3',
       language: 'multi',
       smart_format: true,
       interim_results: true,
-      utterance_end_ms: 1000,
-      vad_events: true,
       endpointing: 300,
       encoding: 'linear16',
       sample_rate: 16000,
@@ -55,6 +74,7 @@ async function startDeepgramSession(io, socket, meetingCode, userId, userName, o
     const connectionEntry = {
       liveSocket,
       meetingCode,
+      callId,
       userId,
       userName,
       isAlive: false,
@@ -62,12 +82,18 @@ async function startDeepgramSession(io, socket, meetingCode, userId, userName, o
 
     activeConnections.set(socket.id, connectionEntry);
 
+    const sessionLabel = meetingCode ? `meeting=${meetingCode}` : `call=${callId}`;
+
     liveSocket.on('open', () => {
       connectionEntry.isAlive = true;
       console.log(
-        `[Deepgram] Session OPEN — socket=${socket.id} user="${userName}" meeting=${meetingCode}`
+        `[Deepgram] Session OPEN — socket=${socket.id} user="${userName}" ${sessionLabel}`
       );
-      socket.emit('deepgram_ready', { status: 'connected' });
+      socket.emit('deepgram_ready', {
+        status: 'connected',
+        meetingCode,
+        callId,
+      });
     });
 
     liveSocket.on('message', (data) => {
@@ -85,6 +111,7 @@ async function startDeepgramSession(io, socket, meetingCode, userId, userName, o
 
       const payload = {
         meetingCode,
+        callId,
         speakerId: userId,
         speakerName: userName,
         text: transcript.trim(),
@@ -94,13 +121,21 @@ async function startDeepgramSession(io, socket, meetingCode, userId, userName, o
         language: data.metadata?.language || 'multi',
       };
 
-      // Broadcast live transcript to all participants in the meeting room
-      io.to(`meeting_${meetingCode}`).emit('meeting_transcript_live', payload);
+      // Broadcast live transcript to the respective meeting or call room
+      if (meetingCode) {
+        io.to(`meeting_${meetingCode}`).emit('meeting_transcript_live', payload);
+        io.to(`meeting_${meetingCode}`).emit('transcript_live', payload);
+      }
+
+      if (callId) {
+        io.to(`call_${callId}`).emit('call_transcript_live', payload);
+        io.to(`call_${callId}`).emit('transcript_live', payload);
+      }
 
       // Persist final segments via direct callback (NO socket round-trip)
       if ((isFinal || speechFinal) && typeof onFinalSegment === 'function') {
         console.log(
-          `[Deepgram] FINAL from "${userName}": "${transcript.trim().slice(0, 80)}"`
+          `[Deepgram] FINAL from "${userName}" (${sessionLabel}): "${transcript.trim().slice(0, 80)}"`
         );
         onFinalSegment(payload).catch((err) =>
           console.error('[Deepgram] onFinalSegment persist error:', err.message)

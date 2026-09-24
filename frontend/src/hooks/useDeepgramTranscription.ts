@@ -2,21 +2,22 @@
  * useDeepgramTranscription.ts
  *
  * Real-time transcription hook using Deepgram Nova-3 via backend WebSocket relay.
+ * Supports both multi-user channel meetings (meetingCode) and 1-on-1 direct calls (callId).
  *
  * Architecture:
  *   Existing WebRTC localStream (microphone)
- *       |
- *       +─── AudioContext (ScriptProcessorNode) → Float32 PCM
- *       |                                            |
- *       |                              Convert to 16-bit PCM Int16 (16kHz)
- *       |                                            |
- *       |                              Socket.IO binary emit (deepgram_audio_chunk)
- *       |                                            |
- *       |                              Backend Deepgram WebSocket (Nova-3)
- *       |                                            |
- *       |                              meeting_transcript_live event
- *       |                                            |
- *       |                              Interim/Final transcript state
+ *       │
+ *       ├─── AudioContext (ScriptProcessorNode) → Float32 PCM
+ *       │                                            │
+ *       │                              Convert to 16-bit PCM Int16 (16kHz)
+ *       │                                            │
+ *       │                              Socket.IO binary emit (deepgram_audio_chunk)
+ *       │                                            │
+ *       │                              Backend Deepgram WebSocket (Nova-3)
+ *       │                                            │
+ *       │                              meeting_transcript_live / call_transcript_live
+ *       │                                            │
+ *       │                              Interim/Final transcript state
  *
  * The WebRTC call continues independently — we only READ audio from the stream.
  * We do NOT create a second getUserMedia call.
@@ -35,7 +36,7 @@ const TARGET_SAMPLE_RATE = 16000; // Deepgram expects 16kHz
 const SCRIPT_PROCESSOR_BUFFER_SIZE = 4096; // ~85ms at 48kHz
 
 export interface DeepgramTranscriptEntry {
-  id: string;           // unique per utterance
+  id: string;           // unique per utterance / speaker
   speakerId?: number;
   speakerName: string;
   text: string;
@@ -44,13 +45,15 @@ export interface DeepgramTranscriptEntry {
   language?: string;
 }
 
-interface UseDeepgramTranscriptionOptions {
+export interface UseDeepgramTranscriptionOptions {
   localStream: MediaStream | null;
-  meetingCode: string | null | undefined;
+  meetingCode?: string | null;
+  callId?: string | null;
   userId?: number;
   userName?: string;
   isMuted: boolean;
-  isInMeeting: boolean;
+  isInMeeting?: boolean; // backwards compatibility
+  isActive?: boolean;    // general active flag (for calls or meetings)
   onTranscriptUpdate: (entry: DeepgramTranscriptEntry) => void;
   onStatusChange?: (status: 'idle' | 'connecting' | 'active' | 'error' | 'muted') => void;
 }
@@ -58,26 +61,27 @@ interface UseDeepgramTranscriptionOptions {
 export function useDeepgramTranscription({
   localStream,
   meetingCode,
+  callId,
   userId,
   userName,
   isMuted,
   isInMeeting,
+  isActive,
   onTranscriptUpdate,
   onStatusChange,
 }: UseDeepgramTranscriptionOptions) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
   const isDeepgramReadyRef = useRef<boolean>(false);
   const isStreamingRef = useRef<boolean>(false);
-  const meetingCodeRef = useRef<string | null | undefined>(null);
   const isMutedRef = useRef<boolean>(false);
   const localStreamRef = useRef<MediaStream | null>(null);
   const isComponentMountedRef = useRef<boolean>(true);
   const chunkCounterRef = useRef<number>(0);
 
   // Keep refs in sync with props
-  meetingCodeRef.current = meetingCode;
   isMutedRef.current = isMuted;
   localStreamRef.current = localStream;
 
@@ -96,6 +100,13 @@ export function useDeepgramTranscription({
         processorNodeRef.current.disconnect();
       } catch (_) {}
       processorNodeRef.current = null;
+    }
+
+    if (gainNodeRef.current) {
+      try {
+        gainNodeRef.current.disconnect();
+      } catch (_) {}
+      gainNodeRef.current = null;
     }
 
     if (sourceNodeRef.current) {
@@ -137,7 +148,7 @@ export function useDeepgramTranscription({
       }
 
       try {
-        // Create AudioContext — we read at native browser rate (usually 44.1 or 48kHz), resample to 16kHz
+        // Create AudioContext — read at native browser rate (44.1kHz or 48kHz), resample to 16kHz
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AudioCtx();
         audioContextRef.current = ctx;
@@ -175,7 +186,7 @@ export function useDeepgramTranscription({
 
           const inputBuffer = event.inputBuffer.getChannelData(0); // Float32Array, mono
 
-          // Downsample to 16kHz
+          // Downsample to 16kHz Int16 PCM
           const outputLength = Math.floor(inputBuffer.length / resampleRatio);
           const int16Buffer = new Int16Array(outputLength);
 
@@ -196,12 +207,15 @@ export function useDeepgramTranscription({
           }
         };
 
-        // Connect: source → processor → SILENT destination
-        // IMPORTANT: Route to MediaStreamDestination (silent), NOT ctx.destination (speakers)
-        // to avoid any mic feedback/echo!
-        const silentDest = ctx.createMediaStreamDestination();
+        // Route: source → processor → muteGain(0) → ctx.destination
+        // Zero gain node prevents mic playback to speakers while keeping the Web Audio clock ticking
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(0, ctx.currentTime);
+        gainNodeRef.current = gainNode;
+
         source.connect(processor);
-        processor.connect(silentDest);
+        processor.connect(gainNode);
+        gainNode.connect(ctx.destination);
 
         isStreamingRef.current = true;
         console.log(
@@ -218,18 +232,19 @@ export function useDeepgramTranscription({
 
   // Initialize Deepgram session on backend
   const startTranscription = useCallback(
-    (code: string) => {
+    (targetCode?: string | null, targetCallId?: string | null) => {
       if (!isComponentMountedRef.current) return;
 
       notifyStatus('connecting');
 
       emitDeepgramStart({
-        meeting_code: code,
+        meeting_code: targetCode || undefined,
+        call_id: targetCallId || undefined,
         user_id: userId,
         user_name: userName || 'Speaker',
       });
 
-      console.log(`[Deepgram Hook] Requested Deepgram session for meeting=${code}`);
+      console.log(`[Deepgram Hook] Requested Deepgram session (meeting=${targetCode}, call=${targetCallId})`);
     },
     [userId, userName, notifyStatus]
   );
@@ -254,9 +269,9 @@ export function useDeepgramTranscription({
     isComponentMountedRef.current = true;
     const socket = getSocket();
 
-    const onReady = () => {
+    const onReady = (data: any) => {
       if (!isComponentMountedRef.current) return;
-      console.log('[Deepgram Hook] deepgram_ready received — Deepgram session is active');
+      console.log('[Deepgram Hook] deepgram_ready received — Deepgram session is active', data);
       isDeepgramReadyRef.current = true;
       notifyStatus('active');
 
@@ -306,18 +321,25 @@ export function useDeepgramTranscription({
 
     socket.on('deepgram_ready', onReady);
     socket.on('meeting_transcript_live', onTranscript);
+    socket.on('call_transcript_live', onTranscript);
+    socket.on('transcript_live', onTranscript);
     socket.on('deepgram_error', onError);
 
     return () => {
       socket.off('deepgram_ready', onReady);
       socket.off('meeting_transcript_live', onTranscript);
+      socket.off('call_transcript_live', onTranscript);
+      socket.off('transcript_live', onTranscript);
       socket.off('deepgram_error', onError);
     };
   }, [startAudioPipeline, onTranscriptUpdate, notifyStatus]);
 
-  // Main effect: start/stop transcription based on meeting state & mute
+  // Main effect: start/stop transcription based on active state & mute
+  const effectiveIsActive = Boolean(isActive !== undefined ? isActive : isInMeeting);
+  const targetId = meetingCode || callId;
+
   useEffect(() => {
-    if (!isInMeeting || !meetingCode || !localStream) {
+    if (!effectiveIsActive || !targetId || !localStream) {
       stopTranscription();
       return;
     }
@@ -330,17 +352,19 @@ export function useDeepgramTranscription({
       return;
     }
 
-    // Unmuted & in meeting: start transcription
+    // Unmuted & active: start transcription session
     if (!isDeepgramReadyRef.current) {
-      startTranscription(meetingCode);
+      startTranscription(meetingCode, callId);
     } else if (!isStreamingRef.current) {
       // Deepgram already connected (e.g. unmuted)
       startAudioPipeline(localStream);
       notifyStatus('active');
     }
   }, [
-    isInMeeting,
+    effectiveIsActive,
+    targetId,
     meetingCode,
+    callId,
     localStream,
     isMuted,
     startTranscription,
