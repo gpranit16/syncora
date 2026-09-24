@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import client from '../../api/client';
 import { inviteToMeeting } from '../../api/meetings';
+import { saveMeetingTranscript } from '../../api/meetingAI';
 import {
   useDeepgramTranscription,
   DeepgramTranscriptEntry,
@@ -534,6 +535,64 @@ export const MeetingRoom: React.FC = () => {
     onTranscriptUpdate: handleTranscriptUpdate,
     onStatusChange: setTranscriptionStatus,
   });
+
+  // Keep ref of finalTranscriptEntries for exit persistence
+  const finalTranscriptEntriesRef = useRef<DeepgramTranscriptEntry[]>([]);
+  finalTranscriptEntriesRef.current = finalTranscriptEntries;
+
+  const persistTranscriptToDatabase = useCallback(async () => {
+    const entries = finalTranscriptEntriesRef.current;
+    const code = meeting?.meeting_code;
+    if (!code || entries.length === 0) return;
+
+    try {
+      const fullText = entries
+        .map((e) => `${e.speakerName || 'Speaker'}: ${e.text}`)
+        .join('\n');
+      const segments = entries.map((e) => ({
+        speaker_id: e.speakerId,
+        speaker_name: e.speakerName,
+        text: e.text,
+        timestamp: e.timestamp,
+        language: e.language || 'en',
+      }));
+
+      await saveMeetingTranscript(code, {
+        transcript_text: fullText,
+        segments,
+        language: 'en',
+      });
+      console.log('[MeetingRoom] Successfully saved meeting transcript buffer to DB via API');
+    } catch (err: any) {
+      console.warn('[MeetingRoom] Note on saving transcript buffer:', err?.message || err);
+    }
+  }, [meeting?.meeting_code]);
+
+  // Periodic incremental transcript persistence to TiDB
+  useEffect(() => {
+    if (finalTranscriptEntries.length === 0 || !meeting?.meeting_code) return;
+    const timeout = setTimeout(() => {
+      persistTranscriptToDatabase().catch(() => {});
+    }, 4000);
+    return () => clearTimeout(timeout);
+  }, [finalTranscriptEntries.length, meeting?.meeting_code, persistTranscriptToDatabase]);
+
+  const handleLeaveMeeting = async () => {
+    await persistTranscriptToDatabase().catch(() => {});
+    leaveMeeting();
+  };
+
+  const handleEndMeetingForEveryone = async () => {
+    await persistTranscriptToDatabase().catch(() => {});
+    await endMeetingForEveryone();
+  };
+
+  // Most recent spoken caption (interim preferred, or latest final if < 4s old)
+  const activeInterimList = Array.from(interimTranscriptMap.values());
+  const latestInterim = activeInterimList.length > 0 ? activeInterimList[activeInterimList.length - 1] : null;
+  const latestFinal = finalTranscriptEntries.length > 0 ? finalTranscriptEntries[finalTranscriptEntries.length - 1] : null;
+  const isLatestFinalRecent = latestFinal && (Date.now() - new Date(latestFinal.timestamp).getTime()) < 4000;
+  const activeLiveCaption = latestInterim || (isLatestFinalRecent ? latestFinal : null);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -1082,6 +1141,17 @@ export const MeetingRoom: React.FC = () => {
         )}
       </main>
 
+      {/* Live Floating Caption / Subtitle (Google Meet Style) */}
+      {activeLiveCaption && !showTranscript && (
+        <div className="meeting-floating-caption-container">
+          <div className="meeting-floating-caption-pill">
+            <span className="caption-dot-pulse" />
+            <span className="caption-speaker">{activeLiveCaption.speakerName}:</span>
+            <span className="caption-text">{activeLiveCaption.text}</span>
+          </div>
+        </div>
+      )}
+
       {/* Floating Bottom Controls Dock (Google Meet Style) */}
       <footer className="meeting-controls-dock" role="toolbar" aria-label="Meeting controls">
         <div className="dock-actions-row">
@@ -1204,7 +1274,7 @@ export const MeetingRoom: React.FC = () => {
           <button
             type="button"
             className="dock-btn leave-btn"
-            onClick={leaveMeeting}
+            onClick={handleLeaveMeeting}
             title="Leave / Cut Call"
             aria-label="Leave meeting"
           >
@@ -1217,7 +1287,7 @@ export const MeetingRoom: React.FC = () => {
             <button
               type="button"
               className="dock-btn end-all-btn"
-              onClick={endMeetingForEveryone}
+              onClick={handleEndMeetingForEveryone}
               title="End meeting for all participants"
               aria-label="End meeting for all"
             >

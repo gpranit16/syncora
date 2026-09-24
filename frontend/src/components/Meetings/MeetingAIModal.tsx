@@ -106,11 +106,20 @@ export const MeetingAIModal: React.FC<MeetingAIModalProps> = ({
     }
   };
 
-  const loadTranscript = async () => {
+  const loadTranscript = async (retryCount = 0) => {
     setLoadingTranscript(true);
     try {
       const data = await getMeetingTranscript(meetingCode);
-      setTranscript(data);
+      if (data && data.transcript_text) {
+        setTranscript(data);
+      } else if (retryCount < 2) {
+        setTimeout(() => {
+          loadTranscript(retryCount + 1);
+        }, 1200);
+        return;
+      } else {
+        setTranscript(data);
+      }
     } catch (err) {
       console.error('Failed to load meeting transcript:', err);
     } finally {

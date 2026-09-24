@@ -62,15 +62,38 @@ export function useDeepgramTranscription({
   onTranscriptUpdate,
   onStatusChange,
 }: UseDeepgramTranscriptionOptions) {
-  // Deepgram Audio Pipeline refs
+  // Stable refs for props to prevent effect dependency thrashing
+  const onTranscriptUpdateRef = useRef(onTranscriptUpdate);
+  onTranscriptUpdateRef.current = onTranscriptUpdate;
+
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
+
+  const meetingCodeRef = useRef(meetingCode);
+  meetingCodeRef.current = meetingCode;
+
+  const callIdRef = useRef(callId);
+  callIdRef.current = callId;
+
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
+
+  const userNameRef = useRef(userName);
+  userNameRef.current = userName;
+
+  const isMutedRef = useRef<boolean>(isMuted);
+  isMutedRef.current = isMuted;
+
+  const localStreamRef = useRef<MediaStream | null>(localStream);
+  localStreamRef.current = localStream;
+
+  // Audio Pipeline refs
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const isDeepgramReadyRef = useRef<boolean>(false);
   const isStreamingRef = useRef<boolean>(false);
-  const isMutedRef = useRef<boolean>(false);
-  const localStreamRef = useRef<MediaStream | null>(null);
   const isComponentMountedRef = useRef<boolean>(true);
   const chunkCounterRef = useRef<number>(0);
 
@@ -79,14 +102,11 @@ export function useDeepgramTranscription({
   const isFallbackActiveRef = useRef<boolean>(false);
   const deepgramConnectingTimeoutRef = useRef<any>(null);
 
-  isMutedRef.current = isMuted;
-  localStreamRef.current = localStream;
-
   const notifyStatus = useCallback(
     (status: 'idle' | 'connecting' | 'active' | 'error' | 'muted') => {
-      onStatusChange?.(status);
+      onStatusChangeRef.current?.(status);
     },
-    [onStatusChange]
+    []
   );
 
   // Stop Web Speech Fallback recognition
@@ -113,8 +133,10 @@ export function useDeepgramTranscription({
       (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      console.warn('[Transcription] Neither Deepgram nor Web Speech API available in this browser');
-      notifyStatus('error');
+      console.warn('[Transcription] Web Speech API not supported in this browser');
+      if (!isDeepgramReadyRef.current) {
+        notifyStatus('error');
+      }
       return;
     }
 
@@ -138,37 +160,41 @@ export function useDeepgramTranscription({
           if (!transcriptText) continue;
 
           const isFinal = res.isFinal === true;
-          const entryId = `speaker_${userId || 'local'}`;
+          const currentUserId = userIdRef.current;
+          const currentUserName = userNameRef.current || 'You';
+          const entryId = `speaker_${currentUserId || 'local'}`;
 
           const entry: DeepgramTranscriptEntry = {
             id: entryId,
-            speakerId: userId,
-            speakerName: userName || 'You',
+            speakerId: currentUserId,
+            speakerName: currentUserName,
             text: transcriptText,
             isFinal,
             timestamp: new Date().toISOString(),
             language: 'multi',
           };
 
-          onTranscriptUpdate(entry);
+          onTranscriptUpdateRef.current(entry);
 
           // Broadcast final segments to peers & persist to database
           if (isFinal) {
-            if (meetingCode) {
+            const currentCode = meetingCodeRef.current;
+            const currentCall = callIdRef.current;
+            if (currentCode) {
               emitMeetingTranscriptChunk({
-                meeting_code: meetingCode,
+                meeting_code: currentCode,
                 text: transcriptText,
-                user_id: userId,
-                user_name: userName || 'You',
+                user_id: currentUserId,
+                user_name: currentUserName,
                 timestamp: entry.timestamp,
                 language: 'en',
               });
-            } else if (callId) {
+            } else if (currentCall) {
               emitCallTranscriptChunk({
-                call_id: callId,
+                call_id: currentCall,
                 text: transcriptText,
-                user_id: userId,
-                user_name: userName || 'You',
+                user_id: currentUserId,
+                user_name: currentUserName,
                 timestamp: entry.timestamp,
               });
             }
@@ -207,7 +233,7 @@ export function useDeepgramTranscription({
         notifyStatus('error');
       }
     }
-  }, [meetingCode, callId, userId, userName, onTranscriptUpdate, notifyStatus]);
+  }, [notifyStatus]);
 
   // Tear down Deepgram Web Audio processing pipeline
   const stopAudioPipeline = useCallback(() => {
@@ -348,22 +374,22 @@ export function useDeepgramTranscription({
       emitDeepgramStart({
         meeting_code: targetCode || undefined,
         call_id: targetCallId || undefined,
-        user_id: userId,
-        user_name: userName || 'Speaker',
+        user_id: userIdRef.current,
+        user_name: userNameRef.current || 'Speaker',
       });
 
-      // If Deepgram backend doesn't connect within 3.5s (e.g. key missing on cloud server), seamlessly activate Web Speech
+      // If Deepgram backend doesn't connect within 2s, seamlessly activate Web Speech fallback
       if (deepgramConnectingTimeoutRef.current) {
         clearTimeout(deepgramConnectingTimeoutRef.current);
       }
       deepgramConnectingTimeoutRef.current = setTimeout(() => {
         if (!isDeepgramReadyRef.current && isComponentMountedRef.current && !isMutedRef.current) {
-          console.log('[Transcription] Deepgram connection timeout — seamlessly switching to Web Speech fallback');
+          console.log('[Transcription] Deepgram response pending — activating Web Speech fallback');
           startWebSpeechFallback();
         }
-      }, 3500);
+      }, 2000);
     },
-    [userId, userName, notifyStatus, startWebSpeechFallback]
+    [notifyStatus, startWebSpeechFallback]
   );
 
   // Resume suspended AudioContext on user interaction
@@ -432,11 +458,11 @@ export function useDeepgramTranscription({
         language: language || 'multi',
       };
 
-      onTranscriptUpdate(entry);
+      onTranscriptUpdateRef.current(entry);
     };
 
     const onError = (data: any) => {
-      console.warn('[Deepgram Hook] deepgram_error received, activating resilient fallback:', data?.message);
+      console.warn('[Deepgram Hook] deepgram_error received, activating resilient fallback:', data?.message, data?.details);
       if (deepgramConnectingTimeoutRef.current) {
         clearTimeout(deepgramConnectingTimeoutRef.current);
         deepgramConnectingTimeoutRef.current = null;
@@ -464,7 +490,7 @@ export function useDeepgramTranscription({
       socket.off('transcript_live', onTranscript);
       socket.off('deepgram_error', onError);
     };
-  }, [startAudioPipeline, stopWebSpeechFallback, startWebSpeechFallback, onTranscriptUpdate, notifyStatus]);
+  }, [startAudioPipeline, stopWebSpeechFallback, startWebSpeechFallback, notifyStatus]);
 
   // Main effect: start/stop transcription based on active state & mute
   const effectiveIsActive = Boolean(isActive !== undefined ? isActive : isInMeeting);
@@ -509,14 +535,21 @@ export function useDeepgramTranscription({
     notifyStatus,
   ]);
 
-  // Cleanup on unmount
+  // Cleanup ONLY on unmount
   useEffect(() => {
     isComponentMountedRef.current = true;
     return () => {
       isComponentMountedRef.current = false;
-      stopTranscription();
+      stopAudioPipeline();
+      stopWebSpeechFallback();
+      if (deepgramConnectingTimeoutRef.current) {
+        clearTimeout(deepgramConnectingTimeoutRef.current);
+        deepgramConnectingTimeoutRef.current = null;
+      }
+      isDeepgramReadyRef.current = false;
+      emitDeepgramStop();
     };
-  }, [stopTranscription]);
+  }, [stopAudioPipeline, stopWebSpeechFallback]);
 
   return {
     stopTranscription,

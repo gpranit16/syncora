@@ -7,6 +7,7 @@ const {
   getMeetingByCode,
   endMeeting,
   inviteToMeeting,
+  checkDeepgramDiagnostic,
 } = require("../controllers/meetingController");
 const {
   saveTranscript,
@@ -23,6 +24,7 @@ router.get("/code/:meetingCode", authMiddleware, getMeetingByCode);
 router.post("/:meetingId/end", authMiddleware, endMeeting);
 router.post("/code/:meetingCode/end", authMiddleware, endMeeting);
 router.post("/:meetingId/invite", authMiddleware, inviteToMeeting);
+router.get("/diagnostic/deepgram", checkDeepgramDiagnostic);
 
 // Meeting AI routes
 router.post("/:meetingCode/transcript", authMiddleware, saveTranscript);

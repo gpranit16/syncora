@@ -512,6 +512,74 @@ const inviteToMeeting = async (req, res) => {
   }
 };
 
+const checkDeepgramDiagnostic = async (req, res) => {
+  const { DeepgramClient } = require("@deepgram/sdk");
+  const rawKey = process.env.DEEPGRAM_API_KEY || "";
+  const apiKey = rawKey.trim().replace(/^["']|["']$/g, "").replace(/[\r\n\t]/g, "");
+
+  if (!apiKey) {
+    return res.status(200).json({
+      configured: false,
+      message: "DEEPGRAM_API_KEY is not set in environment",
+    });
+  }
+
+  const prefix = apiKey.slice(0, 6);
+  const suffix = apiKey.slice(-4);
+  const keyLength = apiKey.length;
+
+  try {
+    const deepgram = new DeepgramClient({ apiKey });
+    const live = await deepgram.listen.v1.connect({ model: "nova-3" });
+
+    let resolved = false;
+    const testPromise = new Promise((resolve) => {
+      live.on("open", () => {
+        if (!resolved) {
+          resolved = true;
+          try { live.close(); } catch (_) {}
+          resolve({ success: true, message: "Connected to Deepgram Nova-3 successfully" });
+        }
+      });
+      live.on("error", (err) => {
+        if (!resolved) {
+          resolved = true;
+          resolve({ success: false, error: err?.message || String(err) });
+        }
+      });
+      live.connect();
+    });
+
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          try { live.close(); } catch (_) {}
+          resolve({ success: false, error: "Connection timed out after 5s" });
+        }
+      }, 5000);
+    });
+
+    const result = await Promise.race([testPromise, timeoutPromise]);
+
+    return res.status(200).json({
+      configured: true,
+      keyLength,
+      prefix: `${prefix}...`,
+      suffix: `...${suffix}`,
+      result,
+    });
+  } catch (err) {
+    return res.status(200).json({
+      configured: true,
+      keyLength,
+      prefix: `${prefix}...`,
+      suffix: `...${suffix}`,
+      result: { success: false, error: err.message },
+    });
+  }
+};
+
 module.exports = {
   createMeeting,
   getActiveMeetingByChannel,
@@ -519,4 +587,5 @@ module.exports = {
   endMeeting,
   inviteToMeeting,
   generateMeetingCode,
+  checkDeepgramDiagnostic,
 };

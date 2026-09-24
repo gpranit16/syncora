@@ -45,7 +45,8 @@ async function startDeepgramSession(io, socket, optionsOrCode, maybeUserId, mayb
     onFinalSegment = maybeOnFinalSegment || null;
   }
 
-  const apiKey = process.env.DEEPGRAM_API_KEY;
+  const rawKey = process.env.DEEPGRAM_API_KEY || '';
+  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '').replace(/[\r\n\t]/g, '');
 
   if (!apiKey) {
     console.error('[Deepgram] DEEPGRAM_API_KEY is not set in environment variables.');
@@ -157,8 +158,12 @@ async function startDeepgramSession(io, socket, optionsOrCode, maybeUserId, mayb
     });
 
     liveSocket.on('error', (err) => {
-      console.error(`[Deepgram] Error for socket=${socket.id}:`, err?.message || err);
-      socket.emit('deepgram_error', { message: 'Transcription error. Will attempt to reconnect.' });
+      const errMsg = err?.message || String(err);
+      console.error(`[Deepgram] Error for socket=${socket.id}:`, errMsg);
+      socket.emit('deepgram_error', {
+        message: 'Transcription error. Will attempt to reconnect.',
+        details: errMsg,
+      });
       connectionEntry.isAlive = false;
       if (connectionEntry.keepAliveTimer) {
         clearInterval(connectionEntry.keepAliveTimer);
