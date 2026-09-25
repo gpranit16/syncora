@@ -23,6 +23,7 @@ const userRoutes = require("./routes/userRoutes");
 const authMiddleware = require("./middleware/authMiddleware");
 const chatSocket = require("./sockets/chatSocket");
 const aiRoutes = require("./routes/aiRoutes");
+const calendarRoutes = require("./routes/calendarRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -62,6 +63,8 @@ app.use("/api/files", fileRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/meetings", meetingRoutes);
+app.use("/api/integrations/google/calendar", calendarRoutes);
+app.use("/api/v1/integrations/google/calendar", calendarRoutes);
 
 app.get("/api/protected", authMiddleware, (req, res) => {
   res.status(200).json({
@@ -96,6 +99,13 @@ app.get("/health", (req, res) => {
 const startServer = async () => {
   try {
     await db.verifyConnection();
+
+    try {
+      const { migrateCalendarTables } = require("./scripts/migrate_calendar_tables");
+      await migrateCalendarTables(db);
+    } catch (migErr) {
+      console.warn("Notice verifying calendar tables:", migErr.message);
+    }
 
     server.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);

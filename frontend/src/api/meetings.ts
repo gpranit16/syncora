@@ -43,6 +43,9 @@ export interface CreateMeetingPayload {
   title?: string;
   mode?: 'voice' | 'video';
   meeting_type?: 'voice' | 'video';
+  scheduled_start_time?: string | null;
+  scheduled_end_time?: string | null;
+  participant_emails?: string[];
 }
 
 export const createMeeting = async (payload: CreateMeetingPayload): Promise<Meeting> => {

@@ -23,6 +23,7 @@ export interface TaskAIActionFields {
   description?: string;
   priority?: 'low' | 'medium' | 'high';
   status?: 'pending' | 'in_progress' | 'completed';
+  due_date?: string | null;
   assigned_to_name?: string;
   _assigned_to_self?: boolean;
   _assigned_to_user_id?: number;
@@ -30,9 +31,14 @@ export interface TaskAIActionFields {
 
 export interface TaskAIAction {
   action: true;
-  type: 'create' | 'update';
+  type: 'create' | 'update' | 'schedule_meeting';
   task_id: number | null;
   fields: TaskAIActionFields;
+  meeting_data?: {
+    title?: string;
+    scheduled_start_time?: string;
+    mode?: 'video' | 'voice';
+  };
   preview: string;
 }
 

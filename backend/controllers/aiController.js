@@ -43,6 +43,11 @@ const stripThinking = (text, userQuestion = '') => {
   cleaned = cleaned.replace(/<\/think>/gi, '');
   cleaned = cleaned.replace(/<\/thought>/gi, '');
 
+  // Strip tool call tags
+  cleaned = cleaned.replace(/<\|tool_call_start\|>[\s\S]*?<\|tool_call_end\|>/gi, '');
+  cleaned = cleaned.replace(/<\|tool_call_start\|>/gi, '');
+  cleaned = cleaned.replace(/<\|tool_call_end\|>/gi, '');
+
   // 2. Remove "Here's a thinking process:" or similar lead-in blocks
   cleaned = cleaned.replace(/Here(?:'s| is) (?:a |the )?thinking process:?[\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '');
   cleaned = cleaned.replace(/Thinking Process:?[\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '');
@@ -299,6 +304,86 @@ const formatTasksForPrompt = (tasks, currentUserName) => {
 };
 
 /**
+ * Robust parser to extract action block from JSON or tool-call syntax (e.g. <|tool_call_start|>[task_create(...)]).
+ */
+const parseActionFromResponse = (rawText, currentUserName, userId) => {
+  if (!rawText || typeof rawText !== 'string') return null;
+
+  // 1. Try standard JSON action match
+  const jsonMatch = rawText.match(/\{[\s\S]*"action"\s*:\s*true[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const actionData = JSON.parse(jsonMatch[0]);
+      if (actionData.action === true) {
+        if (actionData.fields && actionData.fields.assigned_to_name) {
+          const name = actionData.fields.assigned_to_name.toLowerCase();
+          if (name === 'me' || name === currentUserName.toLowerCase()) {
+            actionData.fields.assigned_to_name = currentUserName;
+            actionData.fields._assigned_to_self = true;
+            actionData.fields._assigned_to_user_id = userId;
+          }
+        }
+        return actionData;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Try tool_call syntax: e.g. [task_create(action='create', title='...', ...)]
+  const toolCallRegex = /(?:<\|tool_call_start\|>)?\s*\[?([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\]?\s*(?:<\|tool_call_end\|>)?/;
+  const toolMatch = rawText.match(toolCallRegex);
+  if (toolMatch) {
+    const fnName = toolMatch[1].toLowerCase();
+    const argsStr = toolMatch[2];
+
+    const kwargs = {};
+    const argRegex = /([a-zA-Z0-9_]+)\s*=\s*(?:'([^']*)'|"([^"]*)"|([^,\s\)]+))/g;
+    let m;
+    while ((m = argRegex.exec(argsStr)) !== null) {
+      const key = m[1];
+      const val = m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : m[4]);
+      kwargs[key] = val;
+    }
+
+    if (fnName.includes('meeting') || kwargs.action === 'schedule_meeting') {
+      return {
+        action: true,
+        type: 'schedule_meeting',
+        meeting_data: {
+          title: kwargs.title || kwargs.topic || 'Meeting',
+          scheduled_start_time: kwargs.due_date || kwargs.scheduled_start_time || kwargs.start_time || null,
+          mode: kwargs.mode || 'video',
+        },
+        preview: `Schedule meeting '${kwargs.title || 'Meeting'}' for ${kwargs.due_date || kwargs.scheduled_start_time || 'scheduled time'}`
+      };
+    }
+
+    if (fnName.includes('task') || kwargs.title || kwargs.action) {
+      const assignedName = kwargs.assigned_to_name || currentUserName;
+      const isSelf = assignedName.toLowerCase() === 'me' || assignedName.toLowerCase() === currentUserName.toLowerCase();
+
+      return {
+        action: true,
+        type: kwargs.action || 'create',
+        task_id: kwargs.task_id ? Number(kwargs.task_id) : null,
+        fields: {
+          title: kwargs.title || 'New Task',
+          description: kwargs.description || null,
+          priority: ['low', 'medium', 'high'].includes(kwargs.priority) ? kwargs.priority : 'medium',
+          status: ['pending', 'in_progress', 'completed'].includes(kwargs.status) ? kwargs.status : 'pending',
+          due_date: kwargs.due_date || null,
+          assigned_to_name: assignedName,
+          _assigned_to_self: isSelf,
+          _assigned_to_user_id: isSelf ? userId : undefined,
+        },
+        preview: `Create task '${kwargs.title || 'New Task'}' with deadline ${kwargs.due_date || 'none'}`
+      };
+    }
+  }
+
+  return null;
+};
+
+/**
  * POST /api/ai/ask-tasks
  */
 const askTaskAI = async (req, res) => {
@@ -328,20 +413,29 @@ const askTaskAI = async (req, res) => {
 
     const formattedTasks = formatTasksForPrompt(tasks, currentUserName);
 
-    const systemPrompt = `You are an expert AI project and task management assistant in Syncora. The current user is "${currentUserName}".
-CRITICAL FORMATTING RULES:
+    const nowIso = new Date().toISOString();
+    const nowFriendly = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata", dateStyle: "full", timeStyle: "short" });
+
+    const systemPrompt = `You are an expert AI project, task management, and calendar assistant in Syncora. The current user is "${currentUserName}".
+CURRENT DATE & TIME: ${nowFriendly} (${nowIso}).
+
+CRITICAL RULES:
 1. NEVER output Markdown/ASCII tables (pipes like |---|).
 2. For task listings, use concise bullet points with bold titles and clean badges in parentheses:
    Example:
    • **[#60004] db migrate** (High Priority • Pending • Overdue) — Assigned to Pranit Gupta | "migrate to tidb"
 3. DO NOT repeat tasks in a separate "Summary" section if you have already listed them.
-4. DO NOT add generic closing pleasantries like "Let me know if you'd like more details".
-5. If the user asks for GUIDANCE or ADVICE:
-   Give practical, step-by-step actionable advice relevant to the user's active/pending tasks.
-6. If the user requests a WRITE action (create, update, assign, priority, status):
-   Respond ONLY with the JSON action block:
-   {"action":true,"type":"create"|"update","task_id":null|number,"fields":{"title":"...","description":"...","priority":"low"|"medium"|"high","status":"pending"|"in_progress"|"completed","assigned_to_name":"..."},"preview":"Human-readable description"}
-7. Output ONLY the clean final response. Never output internal thoughts, chain-of-thought, or meta reasoning.`;
+4. CONVERSATIONAL CLARIFICATION & SLOT FILLING:
+   - If the user wants to schedule a meeting or event but did NOT provide a date/time (e.g. "Schedule a meeting with Aman"), ask them directly and warmly: "Sure! What date and time would you like to schedule the meeting for?"
+   - Do NOT force the user to type everything at once; assist them naturally.
+5. WRITE ACTIONS:
+   When enough details are provided to execute an action, respond ONLY with the JSON action block:
+   - For Tasks:
+     {"action":true,"type":"create"|"update","task_id":null|number,"fields":{"title":"...","description":"...","priority":"low"|"medium"|"high","status":"pending"|"in_progress"|"completed","due_date":"YYYY-MM-DD HH:mm:ss"|null,"assigned_to_name":"..."},"preview":"Create task '...' with deadline [date/time]"}
+   - For Meetings:
+     {"action":true,"type":"schedule_meeting","meeting_data":{"title":"...","scheduled_start_time":"YYYY-MM-DD HH:mm:ss","mode":"video"|"voice"},"preview":"Schedule meeting '...' for [Date/Time] with Google Calendar sync"}
+   (Calculate exact YYYY-MM-DD HH:mm:ss based on CURRENT DATE & TIME for phrases like "tomorrow 4pm", "next Monday", "kal 3 baje", etc.)
+6. Output ONLY the clean final response. Never output internal thoughts, chain-of-thought, or meta reasoning.`;
 
     const userPrompt = `Workspace Tasks:
 ${formattedTasks}
@@ -356,29 +450,18 @@ User Request: "${question}"`;
       return res.status(500).json({ success: false, message: 'Failed to communicate with AI provider' });
     }
 
-    // Strip thinking tags
-    rawAnswer = stripThinking(rawAnswer, question);
-
-    // Try to detect a JSON action block
-    const jsonMatch = rawAnswer.match(/\{[\s\S]*"action"\s*:\s*true[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        const actionData = JSON.parse(jsonMatch[0]);
-        if (actionData.action === true) {
-          if (actionData.fields && actionData.fields.assigned_to_name) {
-            const name = actionData.fields.assigned_to_name.toLowerCase();
-            if (name === 'me' || name === currentUserName.toLowerCase()) {
-              actionData.fields.assigned_to_name = currentUserName;
-              actionData.fields._assigned_to_self = true;
-              actionData.fields._assigned_to_user_id = userId;
-            }
-          }
-          return res.json({ success: true, answer: actionData.preview || 'Action ready for confirmation.', action: actionData });
-        }
-      } catch (_) {
-        // fall through to plain text
-      }
+    // 1. Try to detect an action block (JSON or tool_call) before stripping tags
+    const actionData = parseActionFromResponse(rawAnswer, currentUserName, userId);
+    if (actionData) {
+      return res.json({
+        success: true,
+        answer: actionData.preview || 'Action ready for confirmation.',
+        action: actionData
+      });
     }
+
+    // 2. Strip thinking tags and tool call markers
+    rawAnswer = stripThinking(rawAnswer, question);
 
     let answer = rawAnswer.replace(/\{[\s\S]*\}/g, '').trim() || rawAnswer;
     if (!answer) {
@@ -403,4 +486,5 @@ module.exports = {
   askAI,
   askTaskAI,
   stripThinking,
+  parseActionFromResponse,
 };

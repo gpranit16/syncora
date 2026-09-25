@@ -630,7 +630,14 @@ const TaskBoard: React.FC = () => {
                 </div>
 
                 <div className="form-group">
-                  <label>Due Date</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <label style={{ margin: 0 }}>Due Date</label>
+                    {newDueDate && (
+                      <span style={{ fontSize: '0.72rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        📅 Syncs to Google Calendar
+                      </span>
+                    )}
+                  </div>
                   <input
                     className="input"
                     type="date"
@@ -755,7 +762,14 @@ const TaskBoard: React.FC = () => {
               </div>
 
               <div className="form-group">
-                <label>Due Date</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ margin: 0 }}>Due Date</label>
+                  {editDueDate && (
+                    <span style={{ fontSize: '0.72rem', color: '#10b981', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      📅 Syncs to Google Calendar
+                    </span>
+                  )}
+                </div>
                 <input
                   className="input"
                   type="date"

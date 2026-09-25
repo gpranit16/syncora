@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, X, AlertCircle, Loader2, CheckSquare, CheckCircle2, GripHorizontal, RotateCcw } from 'lucide-react';
 import { askTaskAI, type TaskAIAction } from '../../api/ai';
 import { createTask, updateTask, updateTaskStatus, getTasks } from '../../api/tasks';
+import { createMeeting } from '../../api/meetings';
 import { useAuth } from '../../context/AuthContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { getWorkspaceMembers } from '../../api/workspaces';
@@ -261,6 +262,7 @@ const TaskAIAssistant: React.FC<TaskAIAssistantProps> = ({ onTasksChanged }) => 
           priority: action.fields.priority,
           assigned_to: assignedToId,
           status: action.fields.status,
+          due_date: action.fields.due_date || undefined,
         });
       } else if (action.type === 'update' && action.task_id) {
         // Resolve assigned_to if needed
@@ -282,14 +284,22 @@ const TaskAIAssistant: React.FC<TaskAIAssistantProps> = ({ onTasksChanged }) => 
         if (action.fields.description !== undefined) updatePayload.description = action.fields.description;
         if (action.fields.priority !== undefined) updatePayload.priority = action.fields.priority;
         if (action.fields.status !== undefined) updatePayload.status = action.fields.status;
+        if (action.fields.due_date !== undefined) updatePayload.due_date = action.fields.due_date;
         if (assignedToId !== undefined) updatePayload.assigned_to = assignedToId;
 
-        if (action.fields.status && !action.fields.title && !action.fields.priority) {
+        if (action.fields.status && !action.fields.title && !action.fields.priority && !action.fields.due_date) {
           // status-only — use the lightweight status endpoint
           await updateTaskStatus(action.task_id, action.fields.status);
         } else {
           await updateTask(action.task_id, updatePayload);
         }
+      } else if (action.type === 'schedule_meeting') {
+        await createMeeting({
+          workspace_id: activeWorkspace.workspace_id,
+          title: action.meeting_data?.title || 'Scheduled Meeting',
+          mode: action.meeting_data?.mode || 'video',
+          scheduled_start_time: action.meeting_data?.scheduled_start_time || null,
+        });
       }
 
       // Mark as confirmed
@@ -417,21 +427,44 @@ const TaskAIAssistant: React.FC<TaskAIAssistantProps> = ({ onTasksChanged }) => 
                     <div className="task-ai-action-label">
                       <CheckSquare size={13} />
                       <span>
-                        {msg.action.type === 'create' ? 'Create Task' : `Update Task #${msg.action.task_id}`}
+                        {msg.action.type === 'create'
+                          ? 'Create Task'
+                          : msg.action.type === 'schedule_meeting'
+                          ? 'Schedule Meeting'
+                          : `Update Task #${msg.action.task_id}`}
                       </span>
                     </div>
                     <div className="task-ai-action-fields">
-                      {msg.action.fields.title && (
-                        <div><span>Title:</span> {msg.action.fields.title}</div>
-                      )}
-                      {msg.action.fields.priority && (
-                        <div><span>Priority:</span> {msg.action.fields.priority}</div>
-                      )}
-                      {msg.action.fields.status && (
-                        <div><span>Status:</span> {msg.action.fields.status.replace('_', ' ')}</div>
-                      )}
-                      {msg.action.fields.assigned_to_name && (
-                        <div><span>Assignee:</span> {msg.action.fields.assigned_to_name}</div>
+                      {msg.action.type === 'schedule_meeting' ? (
+                        <>
+                          {msg.action.meeting_data?.title && (
+                            <div><span>Topic:</span> {msg.action.meeting_data.title}</div>
+                          )}
+                          {msg.action.meeting_data?.scheduled_start_time && (
+                            <div><span>When:</span> 📅 {msg.action.meeting_data.scheduled_start_time} (Google Calendar)</div>
+                          )}
+                          {msg.action.meeting_data?.mode && (
+                            <div><span>Format:</span> {msg.action.meeting_data.mode.toUpperCase()}</div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {msg.action.fields.title && (
+                            <div><span>Title:</span> {msg.action.fields.title}</div>
+                          )}
+                          {msg.action.fields.priority && (
+                            <div><span>Priority:</span> {msg.action.fields.priority}</div>
+                          )}
+                          {msg.action.fields.due_date && (
+                            <div><span>Due Date:</span> 📅 {msg.action.fields.due_date} (Google Calendar)</div>
+                          )}
+                          {msg.action.fields.status && (
+                            <div><span>Status:</span> {msg.action.fields.status.replace('_', ' ')}</div>
+                          )}
+                          {msg.action.fields.assigned_to_name && (
+                            <div><span>Assignee:</span> {msg.action.fields.assigned_to_name}</div>
+                          )}
+                        </>
                       )}
                     </div>
                     <div className="task-ai-action-buttons">

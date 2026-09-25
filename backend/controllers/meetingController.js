@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const db = require("../config/db");
 const { activeMeetingRooms, saveRoomTranscript } = require("../sockets/meetingSocket");
 const { recordMeetingEndHistory } = require("../services/meetingHistoryService");
+const { syncMeetingToCalendar } = require("../services/googleCalendarService");
 
 // Generate 3-3-3 pattern meeting code (e.g. abc-def-ghi)
 const generateMeetingCode = () => {
@@ -24,6 +25,9 @@ const createMeeting = async (req, res) => {
     const channelId = req.body.channel_id !== undefined ? req.body.channel_id : (req.body.channelId !== undefined ? req.body.channelId : null);
     const title = req.body.title;
     const mode = req.body.mode || req.body.meeting_type || req.body.meetingType || "video";
+    const scheduledStartTime = req.body.scheduled_start_time || req.body.scheduledStartTime || req.body.start_time || null;
+    const scheduledEndTime = req.body.scheduled_end_time || req.body.scheduledEndTime || req.body.end_time || null;
+    const participantEmails = Array.isArray(req.body.participant_emails) ? req.body.participant_emails : [];
 
     if (!workspaceId) {
       return res.status(400).json({ success: false, message: "workspace_id is required" });
@@ -113,9 +117,11 @@ const createMeeting = async (req, res) => {
         host_id,
         title,
         mode,
-        status
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-      [meetingCode, workspaceId, channelId, userId, meetingTitle, meetingMode]
+        status,
+        scheduled_start_time,
+        scheduled_end_time
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      [meetingCode, workspaceId, channelId, userId, meetingTitle, meetingMode, scheduledStartTime, scheduledEndTime]
     );
 
     const meetingId = meetingResult.insertId;
@@ -147,8 +153,22 @@ const createMeeting = async (req, res) => {
       mode: meetingMode,
       meeting_type: meetingMode,
       status: "active",
+      scheduled_start_time: scheduledStartTime,
+      scheduled_end_time: scheduledEndTime,
       created_at: new Date().toISOString(),
     };
+
+    // 6. Sync to Google Calendar in background
+    syncMeetingToCalendar(userId, {
+      meeting_id: meetingId,
+      meeting_code: meetingCode,
+      title: meetingTitle,
+      mode: meetingMode,
+      scheduled_start_time: scheduledStartTime,
+      scheduled_end_time: scheduledEndTime,
+    }, participantEmails).catch((calErr) =>
+      console.warn(`[Calendar] Failed to sync meeting #${meetingId} to Google Calendar:`, calErr.message)
+    );
 
     // 6. Realtime broadcast to channel members
     try {

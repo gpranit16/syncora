@@ -1,4 +1,5 @@
 const db = require("../config/db");
+const { syncTaskToCalendar, deleteTaskFromCalendar } = require("../services/googleCalendarService");
 
 const allowedStatuses = ["pending", "in_progress", "completed"];
 const allowedPriorities = ["low", "medium", "high"];
@@ -109,20 +110,32 @@ const createTask = async (req, res) => {
       [result.insertId]
     );
 
+    const finalTask = createdRows[0] || {
+      task_id: result.insertId,
+      workspace_id,
+      assigned_to: assigned_to || null,
+      created_by: userId,
+      title,
+      description: description || null,
+      status: taskStatus,
+      priority: taskPriority,
+      due_date: due_date || null,
+    };
+
+    if (finalTask.due_date) {
+      const targetUserIds = new Set([userId]);
+      if (finalTask.assigned_to) targetUserIds.add(Number(finalTask.assigned_to));
+      targetUserIds.forEach((uid) => {
+        syncTaskToCalendar(uid, finalTask).catch((err) =>
+          console.warn(`[Calendar] Failed to sync task #${finalTask.task_id} for user ${uid}:`, err.message)
+        );
+      });
+    }
+
     return res.status(201).json({
       success: true,
       message: "Task created successfully",
-      task: createdRows[0] || {
-        task_id: result.insertId,
-        workspace_id,
-        assigned_to: assigned_to || null,
-        created_by: userId,
-        title,
-        description: description || null,
-        status: taskStatus,
-        priority: taskPriority,
-        due_date: due_date || null,
-      },
+      task: finalTask,
     });
   } catch (error) {
     console.error("Create task error:", error.message);
@@ -243,24 +256,36 @@ const createTaskFromMessage = async (req, res) => {
       ]
     );
 
+    const createdTask = {
+      task_id: result.insertId,
+      workspace_id,
+      title,
+      description: description || null,
+      status: "pending",
+      priority: taskPriority,
+      due_date: due_date || null,
+      assigned_to: assigned_to || null,
+      created_by: userId,
+      source_message_id,
+      source_message_type,
+      source_channel_id: source_channel_id || null,
+      source_dm_user_id: source_dm_user_id || null,
+    };
+
+    if (createdTask.due_date) {
+      const targetUserIds = new Set([userId]);
+      if (createdTask.assigned_to) targetUserIds.add(Number(createdTask.assigned_to));
+      targetUserIds.forEach((uid) => {
+        syncTaskToCalendar(uid, createdTask).catch((err) =>
+          console.warn(`[Calendar] Failed to sync task from msg #${createdTask.task_id}:`, err.message)
+        );
+      });
+    }
+
     return res.status(201).json({
       success: true,
       message: "Task created from message",
-      task: {
-        task_id: result.insertId,
-        workspace_id,
-        title,
-        description: description || null,
-        status: "pending",
-        priority: taskPriority,
-        due_date: due_date || null,
-        assigned_to: assigned_to || null,
-        created_by: userId,
-        source_message_id,
-        source_message_type,
-        source_channel_id: source_channel_id || null,
-        source_dm_user_id: source_dm_user_id || null,
-      },
+      task: createdTask,
     });
   } catch (error) {
     console.error("createTaskFromMessage error:", error.message);
@@ -330,6 +355,37 @@ const updateTask = async (req, res) => {
     values.push(taskId);
     await db.promise().query(`UPDATE tasks SET ${updates.join(", ")} WHERE task_id = ?`, values);
 
+    // Fetch refreshed task to sync with Google Calendar
+    try {
+      const refreshedResult = await db.promise().query(
+        "SELECT * FROM tasks WHERE task_id = ?",
+        [taskId]
+      );
+      const refreshedRows = Array.isArray(refreshedResult)
+        ? (Array.isArray(refreshedResult[0]) ? refreshedResult[0] : refreshedResult)
+        : [];
+      if (refreshedRows.length > 0) {
+        const fullTask = refreshedRows[0];
+        const targetUserIds = new Set([userId]);
+        if (fullTask.assigned_to) targetUserIds.add(Number(fullTask.assigned_to));
+        if (fullTask.created_by) targetUserIds.add(Number(fullTask.created_by));
+
+        targetUserIds.forEach((uid) => {
+          if (fullTask.due_date) {
+            syncTaskToCalendar(uid, fullTask).catch((err) =>
+              console.warn(`[Calendar] Failed to update calendar for task #${taskId}:`, err.message)
+            );
+          } else {
+            deleteTaskFromCalendar(uid, taskId).catch((err) =>
+              console.warn(`[Calendar] Failed to delete calendar event for task #${taskId}:`, err.message)
+            );
+          }
+        });
+      }
+    } catch (syncErr) {
+      console.warn("[Calendar] Error triggering calendar sync after update:", syncErr.message);
+    }
+
     return res.status(200).json({
       success: true,
       message: "Task updated successfully",
@@ -384,6 +440,20 @@ const deleteTask = async (req, res) => {
     }
 
     await db.promise().query("DELETE FROM tasks WHERE task_id = ?", [taskId]);
+
+    // Remove from Google Calendar
+    try {
+      const targetUserIds = new Set([userId]);
+      if (task.assigned_to) targetUserIds.add(Number(task.assigned_to));
+      if (task.created_by) targetUserIds.add(Number(task.created_by));
+      targetUserIds.forEach((uid) => {
+        deleteTaskFromCalendar(uid, taskId).catch((err) =>
+          console.warn(`[Calendar] Failed to delete calendar event for task #${taskId}:`, err.message)
+        );
+      });
+    } catch (calErr) {
+      console.warn("[Calendar] Delete calendar sync error:", calErr.message);
+    }
 
     return res.status(200).json({
       success: true,

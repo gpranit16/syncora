@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { analyzeMeetingTranscript, sanitizeMeetingSummary } = require('../services/meetingAIService');
+const { syncTaskToCalendar } = require('../services/googleCalendarService');
 
 /**
  * Helper to fetch meeting and verify caller's workspace membership.
@@ -533,6 +534,17 @@ const createTaskFromActionItem = async (req, res) => {
         io.to(`workspace_${meeting.workspace_id}`).emit('task_created', createdTask);
       }
     } catch (_) {}
+
+    // Sync to Google Calendar
+    if (createdTask && createdTask.due_date) {
+      const targetUserIds = new Set([userId]);
+      if (createdTask.assigned_to) targetUserIds.add(Number(createdTask.assigned_to));
+      targetUserIds.forEach((uid) => {
+        syncTaskToCalendar(uid, createdTask).catch((err) =>
+          console.warn(`[Calendar] Failed to sync task from action item #${createdTask.task_id}:`, err.message)
+        );
+      });
+    }
 
     return res.status(201).json({
       success: true,

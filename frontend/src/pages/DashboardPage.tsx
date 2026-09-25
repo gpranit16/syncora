@@ -107,6 +107,31 @@ const DashboardPage: React.FC = () => {
     }
   }, []);
 
+  // Handle Google Calendar OAuth redirect params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('calendar_connected');
+    if (status === 'success') {
+      const email = params.get('email');
+      setNotification({
+        id: String(Date.now()),
+        title: 'Google Calendar Connected',
+        message: email ? `Successfully synced with ${email}. Deadlines & meetings will now appear in your calendar!` : 'Google Calendar connected successfully!',
+        type: 'info',
+      });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (status === 'error') {
+      const msg = params.get('message') || 'Could not connect Google Calendar';
+      setNotification({
+        id: String(Date.now()),
+        title: 'Calendar Connection Failed',
+        message: msg,
+        type: 'info',
+      });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
   // Fetch workspace channels & automatically join all channel rooms for real-time alerts
   useEffect(() => {
     if (activeWorkspace) {

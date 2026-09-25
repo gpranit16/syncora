@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Hash, MessageSquare, ChevronDown, Plus, Users, Settings, LogOut, CheckSquare, Edit2 } from 'lucide-react';
+import { Hash, MessageSquare, ChevronDown, Plus, Users, Settings, LogOut, CheckSquare, Edit2, Calendar } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { useUnread } from '../../context/UnreadContext';
@@ -29,6 +29,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
   const [showInviteMenu, setShowInviteMenu] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileInitialTab, setProfileInitialTab] = useState<'profile' | 'password' | 'integrations'>('profile');
   const [newChannelName, setNewChannelName] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = localStorage.getItem('syncora_sidebar_width');
@@ -235,6 +236,16 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
             <CheckSquare size={16} />
             <span className="channel-name">Tasks</span>
           </button>
+          <button
+            className="channel-item"
+            onClick={() => {
+              setProfileInitialTab('integrations');
+              setShowProfileModal(true);
+            }}
+          >
+            <Calendar size={16} style={{ color: '#a78bfa' }} />
+            <span className="channel-name">Calendar Sync</span>
+          </button>
         </div>
 
         {/* Persistent Invite Section */}
@@ -266,7 +277,10 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
       <div className="sidebar-footer">
         <div
           className="user-info user-profile-clickable"
-          onClick={() => setShowProfileModal(true)}
+          onClick={() => {
+            setProfileInitialTab('profile');
+            setShowProfileModal(true);
+          }}
           title="Click to edit Name, Password & Display Picture"
         >
           <div className="avatar">
@@ -295,6 +309,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeChannelId, onChannelSelect, onD
       <UserProfileModal
         isOpen={showProfileModal}
         onClose={() => setShowProfileModal(false)}
+        initialTab={profileInitialTab}
       />
     </aside>
     </>
