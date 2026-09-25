@@ -505,7 +505,7 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
                 title="Join this live meeting"
               >
                 <Video size={15} />
-                <span>Join Meeting</span>
+                <span className="channel-join-label">Join Meeting</span>
               </button>
               {user && Number(activeMeeting.host_id) === Number(user.user_id) && (
                 <button
@@ -515,7 +515,7 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
                   title="End meeting for all participants"
                 >
                   <PhoneOff size={13} />
-                  <span>End</span>
+                  <span className="channel-end-label">End</span>
                 </button>
               )}
             </div>
@@ -856,7 +856,7 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
               }
             }}
           />
-          <button type="button" className="btn-icon" style={{ marginRight: '8px' }} onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
+          <button type="button" className="btn-icon composer-attach-btn" onClick={() => fileInputRef.current?.click()} disabled={isUploading} title="Attach file">
             <Paperclip size={18} />
           </button>
           <input
@@ -1066,7 +1066,7 @@ const ChatView: React.FC<ChatViewProps> = ({ channel, onDmSelect, onChannelDelet
       {/* Confirmation Modal for Role Changes, Removal, Ban, Unban, Channel Deletion */}
       {confirmModal && (
         <div className="modal-overlay" onClick={() => !actionLoading && setConfirmModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460, width: 'min(460px, calc(100vw - 24px))' }}>
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <AlertTriangle size={20} color="var(--accent-warning)" />

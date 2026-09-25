@@ -819,61 +819,14 @@
   }
 }
 
-@media (max-width: 768px) {
-  .chat-members-panel {
-    left: 0;
-    right: 0;
-    width: 100% !important;
-    max-width: 100% !important;
-    border-left: none !important;
-    border-radius: 0 !important;
-    animation: slideInMembersPhone 250ms ease;
+@keyframes slideInMembersPhone {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
   }
-
-  @keyframes slideInMembersPhone {
-    from {
-      transform: translateX(100%);
-      opacity: 0;
-    }
-    to {
-      transform: translateX(0);
-      opacity: 1;
-    }
-  }
-
-  .members-list {
-    padding: var(--space-4);
-  }
-
-  .member-row {
-    flex-wrap: wrap;
-    padding: var(--space-4);
-    gap: var(--space-3);
-  }
-
-  .member-meta {
-    flex: 0 1 100%;
-  }
-
-  .member-row .btn {
-    flex: 0 1 auto;
-  }
-
-  .chat-header,
-  .chat-messages,
-  .reply-banner,
-  .chat-composer {
-    padding-left: var(--space-4);
-    padding-right: var(--space-4);
-  }
-
-.composer-input {
-    height: 40px;
-    font-size: 0.8125rem;
-  }
-
-  .message-text {
-    font-size: 0.8125rem;
+  to {
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 
@@ -1053,9 +1006,411 @@
   transform: translateY(-1px);
 }
 
-.meeting-event-ai-btn.transcript:hover {
-  background: rgba(56, 189, 248, 0.2);
-  color: #ffffff;
-  border-color: #38bdf8;
+/* ── Mobile Responsive Layout (< 768px) ─────────────────────────────────── */
+@media (max-width: 768px) {
+  .chat-header {
+    padding: 8px 12px;
+    min-height: 50px;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .chat-header-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+
+  .chat-header-info {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .chat-header-info h3 {
+    font-size: 0.875rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0;
+  }
+
+  .chat-header-desc {
+    font-size: 0.6875rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0;
+  }
+
+  .chat-header-actions {
+    gap: 4px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .chat-header-actions .btn-icon {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+
+  .channel-meeting-btn {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+
+  .channel-meeting-label {
+    display: none !important;
+  }
+
+  .channel-live-meeting-group {
+    gap: 4px;
+  }
+
+  .channel-live-indicator-pill {
+    height: 28px;
+    padding: 0 6px;
+    gap: 4px;
+  }
+
+  .live-indicator-text {
+    display: none;
+  }
+
+  .live-mode-tag {
+    display: none;
+  }
+
+  .channel-join-meeting-btn {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 0.75rem;
+    gap: 4px;
+  }
+
+  .channel-join-label {
+    display: inline;
+  }
+
+  .channel-end-meeting-btn {
+    height: 28px;
+    padding: 0 6px;
+    font-size: 0.75rem;
+    gap: 3px;
+  }
+
+  .channel-active-meeting-banner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .banner-left {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .banner-info {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .banner-title {
+    font-size: 0.8125rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .banner-right {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .banner-join-btn {
+    flex: 1;
+    justify-content: center;
+    height: 32px;
+    font-size: 0.8125rem;
+  }
+
+  .banner-end-btn {
+    height: 32px;
+    font-size: 0.75rem;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+
+  .chat-messages {
+    padding: 10px 12px;
+    gap: 4px;
+    overflow-x: hidden;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .message {
+    padding: 6px 8px;
+    gap: 8px;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .message-content {
+    min-width: 0;
+    flex: 1;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .message-text {
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .message-attachment {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .message-attachment img {
+    max-width: min(200px, 100%);
+    height: auto;
+  }
+
+  .message-actions {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    max-width: calc(100vw - 32px);
+    z-index: 10;
+    padding: 2px;
+    gap: 1px;
+  }
+
+  .message-actions .btn-icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  .channel-meeting-event-wrapper {
+    width: 100%;
+    padding: 0;
+    margin: 8px 0;
+  }
+
+  .channel-meeting-event-card {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .channel-meeting-event-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+  }
+
+  .channel-meeting-event-content {
+    min-width: 0;
+    flex: 1;
+    gap: 4px;
+  }
+
+  .channel-meeting-event-title {
+    font-size: 0.8125rem;
+  }
+
+  .channel-meeting-event-subtext {
+    font-size: 0.6875rem;
+    gap: 6px;
+  }
+
+  .channel-meeting-event-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    margin-top: 6px;
+  }
+
+  .meeting-event-ai-btn {
+    flex: 1;
+    min-width: 110px;
+    justify-content: center;
+    font-size: 0.6875rem;
+    padding: 5px 8px;
+  }
+
+  .chat-composer {
+    padding: 8px 10px;
+    gap: 6px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .composer-attach-btn,
+  .chat-composer .btn-icon {
+    width: 36px;
+    height: 36px;
+    margin-right: 0 !important;
+    flex-shrink: 0;
+  }
+
+  .composer-input {
+    height: 38px;
+    font-size: 0.8125rem;
+    padding: 0 12px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .send-btn {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+  }
+
+  .reply-banner {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .file-preview {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .chat-members-panel {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100dvh !important;
+    z-index: 1001 !important;
+    border-left: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .members-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 1000 !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+  }
+
+  .members-header {
+    padding: 12px 16px;
+  }
+
+  .member-row {
+    padding: 8px 12px;
+    gap: 10px;
+  }
+
+  .member-meta {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .member-name {
+    font-size: 0.8125rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .member-email {
+    font-size: 0.6875rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
+
+@media (max-width: 480px) {
+  .chat-header {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+
+  .chat-header-actions {
+    gap: 3px;
+  }
+
+  .chat-header-actions .btn-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .channel-meeting-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  .channel-join-label {
+    display: none;
+  }
+
+  .channel-end-label {
+    display: none;
+  }
+
+  .channel-join-meeting-btn {
+    padding: 0 6px;
+    width: 28px;
+    justify-content: center;
+  }
+
+  .channel-end-meeting-btn {
+    padding: 0 6px;
+    width: 28px;
+    justify-content: center;
+  }
+
+  .chat-composer {
+    padding: 6px 8px;
+    gap: 4px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .composer-attach-btn,
+  .chat-composer .btn-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .send-btn {
+    width: 34px;
+    height: 34px;
+  }
+}
+
 
