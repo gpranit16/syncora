@@ -154,16 +154,17 @@ const CreateTaskFromMessageModal: React.FC<CreateTaskFromMessageModalProps> = ({
           />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+        <div className="form-row-2" style={{ marginTop: 14 }}>
           <div className="form-group">
             <label>Priority</label>
-            <div className="task-priority-selector">
+            <div className="task-priority-selector" style={{ display: 'flex', gap: 6, width: '100%' }}>
               {(['low', 'medium', 'high'] as const).map((p) => (
                 <button
                   key={p}
+                  type="button"
                   className={`btn btn-sm ${priority === p ? 'btn-primary' : 'btn-ghost'}`}
                   onClick={() => setPriority(p)}
-                  style={{ textTransform: 'capitalize', flex: 1 }}
+                  style={{ textTransform: 'capitalize', flex: 1, minWidth: 0 }}
                 >
                   {p}
                 </button>

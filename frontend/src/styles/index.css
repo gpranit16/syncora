@@ -527,9 +527,10 @@ h4 { font-size: 1rem; }
   border-radius: var(--radius-md);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
   padding: var(--space-6);
-  min-width: 400px;
+  min-width: 0;
   max-width: 560px;
   width: 100%;
+  box-sizing: border-box;
   animation: scaleIn 200ms ease;
 }
 
@@ -538,10 +539,41 @@ h4 { font-size: 1rem; }
   align-items: center;
   justify-content: space-between;
   margin-bottom: var(--space-5);
+  gap: var(--space-3);
 }
 
 .modal-header h3 {
   font-size: 1.125rem;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 768px) {
+  .modal-overlay {
+    padding: var(--space-3);
+    align-items: center;
+  }
+
+  .modal {
+    padding: var(--space-4);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    border-radius: var(--radius-lg);
+  }
+
+  .toast-container {
+    left: var(--space-3);
+    right: var(--space-3);
+    top: var(--space-3);
+  }
+
+  .toast {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+  }
 }
 
 @keyframes fadeIn {

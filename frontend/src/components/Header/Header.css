@@ -185,8 +185,9 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  width: 360px;
-  max-height: 400px;
+  width: min(360px, calc(100vw - 20px));
+  max-width: calc(100vw - 20px);
+  max-height: min(400px, calc(100dvh - 70px));
   overflow-y: auto;
 }
 

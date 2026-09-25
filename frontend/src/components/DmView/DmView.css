@@ -659,7 +659,7 @@
   }
 
   .dm-header-actions {
-    gap: 6px;
+    gap: 4px;
   }
 
   /* On mobile: Compact icon-only call buttons */
@@ -676,7 +676,12 @@
   }
 
   .dm-search {
-    padding: 10px 12px;
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .dm-user-row {
+    padding: 0 8px 0 0;
   }
 
   .dm-user-item {
@@ -695,6 +700,7 @@
   .chat-messages {
     padding: 10px 12px;
     gap: 4px;
+    overflow-x: hidden;
   }
 
   .message {
@@ -706,6 +712,10 @@
     font-size: 0.8125rem;
   }
 
+  .message-actions {
+    max-width: calc(100vw - 32px);
+  }
+
   .dm-reply-banner,
   .dm-file-preview {
     padding: 6px 12px;
@@ -715,6 +725,7 @@
   .dm-composer {
     padding: 8px 10px;
     gap: 6px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   }
 
   .dm-attach-btn {
@@ -767,13 +778,52 @@
   }
 }
 
+@media (max-width: 480px) {
+  .dm-header {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+
+  .dm-header-avatar {
+    width: 28px;
+    height: 28px;
+  }
+
+  .dm-header-actions {
+    gap: 3px;
+  }
+
+  .dm-call-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  .dm-composer {
+    padding: 6px 8px;
+    gap: 4px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .dm-attach-btn {
+    width: 32px;
+    height: 32px;
+  }
+
+  .dm-send-btn {
+    width: 34px;
+    height: 34px;
+  }
+}
+
 /* ── Delete Confirmation Modal ───────────────────────────────────────────── */
 .dm-delete-modal {
   max-width: 440px;
+  width: min(440px, calc(100vw - 24px));
   background: #141418;
   border: 1px solid #27272a;
   border-radius: var(--radius-lg);
-  padding: 24px;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
 .dm-delete-icon-wrap {

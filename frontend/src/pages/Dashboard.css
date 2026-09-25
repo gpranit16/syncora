@@ -241,3 +241,28 @@
   align-self: flex-start;
 }
 
+@media (max-width: 768px) {
+  .notif-permission-banner {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    max-width: calc(100vw - 20px);
+    font-size: 0.75rem;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .dashboard-toast {
+    bottom: 16px;
+    right: 12px;
+    left: 12px;
+    max-width: calc(100vw - 24px);
+    min-width: 0;
+    padding: 10px 14px;
+  }
+
+  .onboarding-container {
+    padding: var(--space-4);
+  }
+}
+

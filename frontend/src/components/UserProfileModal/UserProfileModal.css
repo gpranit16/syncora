@@ -341,11 +341,56 @@
 }
 
 @media (max-width: 600px) {
+  .user-profile-modal {
+    width: min(520px, calc(100vw - 20px));
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+
+  .profile-modal-tabs {
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 4px;
+  }
+
+  .profile-modal-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .profile-tab-btn {
+    flex-shrink: 0;
+    padding: 8px 10px;
+    font-size: 0.75rem;
+    gap: 4px;
+  }
+
   .presets-grid {
     grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
   }
+
   .avatar-edit-section {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+  }
+
+  .avatar-button-group {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .profile-modal-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .profile-modal-footer .btn {
+    flex: 1 1 auto;
   }
 }
